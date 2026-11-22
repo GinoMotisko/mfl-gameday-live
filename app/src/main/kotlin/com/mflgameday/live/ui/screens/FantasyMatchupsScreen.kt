@@ -349,7 +349,20 @@ private fun MatchupSummaryCard(
       listOf(matchup.away, matchup.home).forEach { side ->
         val isMine = side.franchiseId == config.franchiseId
         val isLeading = side.score >= (if (side == matchup.away) matchup.home.score else matchup.away.score)
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+          if (!side.logoUrl.isNullOrBlank()) {
+            AsyncImage(
+              model = side.logoUrl,
+              contentDescription = null,
+              modifier = Modifier
+                .size(26.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .border(0.75.dp, ext.cardBorder, RoundedCornerShape(6.dp))
+            )
+          }
           Text(
             text = side.franchiseName,
             fontWeight = if (isMine) FontWeight.ExtraBold else FontWeight.Medium,
@@ -636,7 +649,10 @@ private fun HeroTeamSide(
         AsyncImage(
           model = side.logoUrl,
           contentDescription = null,
-          modifier = Modifier.size(28.dp).clip(RoundedCornerShape(6.dp))
+          modifier = Modifier
+            .size(46.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .border(1.dp, ext.cardBorder, RoundedCornerShape(10.dp))
         )
       }
       Text(
@@ -650,7 +666,10 @@ private fun HeroTeamSide(
         AsyncImage(
           model = side.logoUrl,
           contentDescription = null,
-          modifier = Modifier.size(28.dp).clip(RoundedCornerShape(6.dp))
+          modifier = Modifier
+            .size(46.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .border(1.dp, ext.cardBorder, RoundedCornerShape(10.dp))
         )
       }
     }
@@ -857,8 +876,8 @@ private fun PlayerScoreRow(
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(9.dp)
   ) {
-    // Official NFL Player Headshot / Team Defense Logo with corner position tag
-    PlayerHeadshotAvatar(player = player, size = 38.dp)
+    // Unobstructed 52dp NFL Player Headshot / Team Defense Logo with centered-below position pill
+    PlayerHeadshotAvatar(player = player, size = 52.dp)
 
     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
       Row(

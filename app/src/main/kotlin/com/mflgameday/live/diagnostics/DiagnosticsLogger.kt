@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import java.io.File
 import java.io.PrintWriter
@@ -225,15 +226,31 @@ object DiagnosticsLogger {
     true
   }.getOrDefault(false)
 
+  const val SUPPORT_EMAIL = "support.gameday@motisko.com"
+
   fun shareReportIntent(context: Context) {
     runCatching {
       val report = buildFormattedReport()
       val sendIntent = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
-        putExtra(Intent.EXTRA_SUBJECT, "MFL GameDay Live — Diagnostic Log Report")
+        putExtra(Intent.EXTRA_SUBJECT, "GameDay Live — Diagnostic Log Report")
         putExtra(Intent.EXTRA_TEXT, report)
       }
       context.startActivity(Intent.createChooser(sendIntent, "Share Diagnostic Logs"))
+    }
+  }
+
+  fun emailSupportIntent(context: Context) {
+    runCatching {
+      val report = buildFormattedReport()
+      val subject = "GameDay Live Support (${Build.MODEL})"
+      val mailUri = Uri.parse(
+        "mailto:$SUPPORT_EMAIL?subject=${Uri.encode(subject)}&body=${Uri.encode("Describe what happened above this line:\n\n" + report.take(6000))}"
+      )
+      val intent = Intent(Intent.ACTION_SENDTO, mailUri)
+      context.startActivity(intent)
+    }.onFailure {
+      shareReportIntent(context)
     }
   }
 

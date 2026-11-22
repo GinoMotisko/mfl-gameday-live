@@ -138,13 +138,17 @@ fun SetupAndAuthScreen(
             }
             Column {
               Text(
-                text = "MFL GAMEDAY LIVE",
+                text = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) "GAMEDAY LIVE" else "MFL GAMEDAY LIVE",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Black,
                 color = MaterialTheme.colorScheme.onSurface
               )
               Text(
-                text = "Real-Time Multi-League Scoring · Live NFL RedZone · Spoken Play-by-Play",
+                text = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) {
+                  "Live Spoken Football Audio · Multi-League Fantasy Companion"
+                } else {
+                  "Real-Time Multi-League Scoring · Live NFL RedZone · Spoken Play-by-Play"
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = ext.subtleText
               )

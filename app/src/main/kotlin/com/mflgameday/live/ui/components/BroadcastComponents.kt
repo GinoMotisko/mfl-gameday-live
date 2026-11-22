@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.SubcomposeAsyncImage
+import com.mflgameday.live.BuildConfig
 import com.mflgameday.live.model.ExposureRole
 import com.mflgameday.live.model.FantasyPlayer
 import com.mflgameday.live.model.GameEventKind
@@ -89,7 +90,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun TeamShieldBadge(
   team: NflTeam,
-  size: Dp = 38.dp,
+  size: Dp = 48.dp,
   hasPossession: Boolean = false,
   inRedZone: Boolean = false,
   logoUrlOverride: String? = null
@@ -107,21 +108,21 @@ fun TeamShieldBadge(
   Box(
     modifier = Modifier
       .size(size)
-      .clip(RoundedCornerShape(11.dp))
+      .clip(RoundedCornerShape(12.dp))
       .background(
         Brush.linearGradient(
-          listOf(primary.copy(alpha = 0.28f), primary.copy(alpha = 0.12f))
+          listOf(primary.copy(alpha = 0.30f), primary.copy(alpha = 0.12f))
         )
       )
       .border(
         width = if (hasPossession) 2.dp else 1.dp,
         color = ringColor,
-        shape = RoundedCornerShape(11.dp)
+        shape = RoundedCornerShape(12.dp)
       )
-      .padding(3.dp),
+      .padding(2.dp),
     contentAlignment = Alignment.Center
   ) {
-    if (team.code in NflTeam.catalog || !logoUrlOverride.isNullOrBlank()) {
+    if (!BuildConfig.IS_PLAY_STORE_BUILD && (team.code in NflTeam.catalog || !logoUrlOverride.isNullOrBlank())) {
       SubcomposeAsyncImage(
         model = resolvedLogo,
         contentDescription = team.fullName,
@@ -152,28 +153,40 @@ private fun TeamCodeMonogram(code: String, size: Dp) {
 
 /**
  * Circular player headshot (or team logo for Team Defenses) with a compact position badge.
- * Falls back cleanly to a styled position pill when offline or for unmapped rookies.
+ * Falls back cleanly to a styled position pill when offline or on Play Store IP-safe builds.
  */
 @Composable
 fun PlayerHeadshotAvatar(
   player: FantasyPlayer?,
-  size: Dp = 38.dp
+  size: Dp = 52.dp
 ) {
   val ext = LocalGameDayColors.current
   val posText = player?.position?.uppercase() ?: "FLX"
-  val imageUrl = player?.avatarImageUrl
+  val imageUrl = if (BuildConfig.IS_PLAY_STORE_BUILD) null else player?.avatarImageUrl
+  val initials = remember(player?.displayName, posText) {
+    val parts = player?.displayName?.trim()?.split("\\s+".toRegex()).orEmpty()
+    when {
+      parts.size >= 2 -> "${parts.first().firstOrNull() ?: ""}${parts.last().firstOrNull() ?: ""}".uppercase()
+      parts.size == 1 && parts[0].length >= 2 -> parts[0].take(2).uppercase()
+      else -> posText
+    }
+  }
   val teamTint = player?.let { Color(it.team.primaryColorHex) } ?: MaterialTheme.colorScheme.primary
 
-  Box(modifier = Modifier.size(size)) {
+  Column(
+    horizontalAlignment = Alignment.CenterHorizontally,
+    verticalArrangement = Arrangement.spacedBy(3.dp)
+  ) {
+    // Full unobstructed circular headshot / team shield — zero badge overlap on the photo
     Box(
       modifier = Modifier
-        .fillMaxSize()
+        .size(size)
         .clip(CircleShape)
-        .background(teamTint.copy(alpha = if (ext.isDark) 0.26f else 0.14f))
-        .border(1.dp, ext.cardBorder, CircleShape),
+        .background(teamTint.copy(alpha = if (ext.isDark) 0.30f else 0.16f))
+        .border(1.25.dp, teamTint.copy(alpha = 0.65f), CircleShape),
       contentAlignment = Alignment.Center
     ) {
-      if (!imageUrl.isNullOrBlank()) {
+      if (!imageUrl.isNullOrBlank() && player != null) {
         SubcomposeAsyncImage(
           model = imageUrl,
           contentDescription = player.displayName,
@@ -182,38 +195,39 @@ fun PlayerHeadshotAvatar(
             .fillMaxSize()
             .padding(if (player.isTeamDefense) 5.dp else 0.dp),
           loading = {
-            Text(posText, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace)
+            Text(initials, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace)
           },
           error = {
-            Text(posText, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace)
+            Text(initials, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace)
           }
         )
       } else {
         Text(
-          text = posText,
-          fontSize = 10.sp,
+          text = initials,
+          fontSize = 12.sp,
           fontWeight = FontWeight.ExtraBold,
           fontFamily = FontFamily.Monospace,
-          color = MaterialTheme.colorScheme.onSurfaceVariant
+          color = MaterialTheme.colorScheme.onSurface
         )
       }
     }
 
-    // Mini corner position tag
+    // Centered position capsule cleanly below the photo so 100% of the player face stays visible
     Box(
       modifier = Modifier
-        .align(Alignment.BottomEnd)
-        .clip(RoundedCornerShape(4.dp))
+        .clip(RoundedCornerShape(5.dp))
         .background(MaterialTheme.colorScheme.surface)
-        .border(0.75.dp, ext.cardBorder, RoundedCornerShape(4.dp))
-        .padding(horizontal = 3.dp, vertical = 0.5.dp)
+        .border(0.75.dp, ext.cardBorder, RoundedCornerShape(5.dp))
+        .padding(horizontal = 6.dp, vertical = 1.dp),
+      contentAlignment = Alignment.Center
     ) {
       Text(
         text = posText,
-        fontSize = 8.sp,
+        fontSize = 9.sp,
         fontWeight = FontWeight.Black,
         fontFamily = FontFamily.Monospace,
-        color = MaterialTheme.colorScheme.primary
+        color = MaterialTheme.colorScheme.primary,
+        maxLines = 1
       )
     }
   }
@@ -465,7 +479,7 @@ fun LiveCelebrationBanner(
           horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
           if (eventTeam != null && eventTeam.code in NflTeam.catalog) {
-            TeamShieldBadge(team = eventTeam, size = 42.dp, hasPossession = true)
+            TeamShieldBadge(team = eventTeam, size = 52.dp, hasPossession = true)
           } else {
             Box(
               modifier = Modifier

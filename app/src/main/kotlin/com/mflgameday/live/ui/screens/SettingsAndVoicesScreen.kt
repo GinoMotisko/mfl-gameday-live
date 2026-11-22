@@ -31,12 +31,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PlayArrow
@@ -95,7 +97,8 @@ fun SettingsAndVoicesScreen(
   uiState: GameDayUiState,
   coordinator: GameDayCoordinator,
   onRequestNotificationPermission: () -> Unit,
-  onOpenAddLeague: () -> Unit
+  onOpenAddLeague: () -> Unit,
+  onOpenQuickTour: () -> Unit = {}
 ) {
   val context = LocalContext.current
   val ext = LocalGameDayColors.current
@@ -511,38 +514,40 @@ fun SettingsAndVoicesScreen(
           }
         }
 
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
-            Icon(
-              imageVector = if (isIgnoringBatteryOpt) Icons.Default.CheckCircle else Icons.Default.BatteryChargingFull,
-              contentDescription = null,
-              tint = if (isIgnoringBatteryOpt) ext.turfAccent else MaterialTheme.colorScheme.secondary
-            )
-            Column {
-              Text("Unrestricted All-Day Sunday Battery", fontWeight = FontWeight.SemiBold)
-              Text(
-                text = if (isIgnoringBatteryOpt) "Unrestricted — Samsung One UI / Android Doze won't throttle polling" else "Optional: prevents OS sleep throttling during 10-hour game slates",
-                style = MaterialTheme.typography.labelSmall,
-                color = ext.subtleText
+        if (!com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+          ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
+              Icon(
+                imageVector = if (isIgnoringBatteryOpt) Icons.Default.CheckCircle else Icons.Default.BatteryChargingFull,
+                contentDescription = null,
+                tint = if (isIgnoringBatteryOpt) ext.turfAccent else MaterialTheme.colorScheme.secondary
               )
-            }
-          }
-          if (!isIgnoringBatteryOpt) {
-            OutlinedButton(
-              onClick = {
-                runCatching {
-                  val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = Uri.parse("package:${context.packageName}")
-                  }
-                  context.startActivity(intent)
-                }
+              Column {
+                Text("Unrestricted All-Day Sunday Battery", fontWeight = FontWeight.SemiBold)
+                Text(
+                  text = if (isIgnoringBatteryOpt) "Unrestricted — Samsung One UI / Android Doze won't throttle polling" else "Optional: prevents OS sleep throttling during 10-hour game slates",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = ext.subtleText
+                )
               }
-            ) {
-              Text("Allow")
+            }
+            if (!isIgnoringBatteryOpt) {
+              OutlinedButton(
+                onClick = {
+                  runCatching {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                      data = Uri.parse("package:${context.packageName}")
+                    }
+                    context.startActivity(intent)
+                  }
+                }
+              ) {
+                Text("Allow")
+              }
             }
           }
         }
@@ -619,6 +624,26 @@ fun SettingsAndVoicesScreen(
             Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text("Share Logs")
+          }
+          FilledTonalButton(onClick = { DiagnosticsLogger.emailSupportIntent(context) }) {
+            Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Email Support")
+          }
+          OutlinedButton(onClick = onOpenQuickTour) {
+            Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Quick Tour Guide")
+          }
+          OutlinedButton(
+            onClick = {
+              runCatching {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.motisko.com/gameday/privacy"))
+                context.startActivity(intent)
+              }
+            }
+          ) {
+            Text("Privacy Policy (Motisko Ventures LLC)")
           }
         }
       }

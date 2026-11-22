@@ -21,11 +21,26 @@ android {
   namespace = "com.mflgameday.live"
   compileSdk = 36
   defaultConfig {
-    applicationId = "com.mflgameday.live"
     minSdk = 31
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0.0"
+    versionCode = 2
+    versionName = "1.1.0"
+  }
+
+  flavorDimensions += "distribution"
+  productFlavors {
+    create("direct") {
+      dimension = "distribution"
+      applicationId = "com.mflgameday.live"
+      resValue("string", "app_name", "MFL GameDay")
+      buildConfigField("boolean", "IS_PLAY_STORE_BUILD", "false")
+    }
+    create("playStore") {
+      dimension = "distribution"
+      applicationId = "com.motiskoventures.gameday"
+      resValue("string", "app_name", "GameDay Live")
+      buildConfigField("boolean", "IS_PLAY_STORE_BUILD", "true")
+    }
   }
 
   signingConfigs {
@@ -59,7 +74,8 @@ android {
   buildFeatures {
     compose = true
     aidl = false
-    buildConfig = false
+    buildConfig = true
+    resValues = true
     shaders = false
   }
 

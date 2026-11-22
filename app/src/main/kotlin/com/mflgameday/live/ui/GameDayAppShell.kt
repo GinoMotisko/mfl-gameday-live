@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Campaign
@@ -59,6 +60,7 @@ import com.mflgameday.live.service.GameDayUiState
 import com.mflgameday.live.ui.components.GameDayStatusBar
 import com.mflgameday.live.ui.components.LiveCelebrationBanner
 import com.mflgameday.live.ui.components.LiveSpeakingRibbon
+import com.mflgameday.live.ui.components.QuickTourDialog
 import com.mflgameday.live.ui.screens.FantasyMatchupsScreen
 import com.mflgameday.live.ui.screens.NflGamesScreen
 import com.mflgameday.live.ui.screens.PlayFeedScreen
@@ -92,6 +94,7 @@ fun GameDayAppShell(
     )
   }
   var showAddLeagueModal by rememberSaveable { mutableStateOf(false) }
+  var showManualQuickTour by rememberSaveable { mutableStateOf(false) }
 
   if (uiState.settings.operatingMode == OperatingMode.UNCONFIGURED || showAddLeagueModal) {
     Column(
@@ -139,6 +142,7 @@ fun GameDayAppShell(
         compact = isCompactHeader,
         onSelectScope = { sc -> coordinator.updateSettings { it.copy(scope = sc) } },
         onToggleMute = { coordinator.updateSettings { it.copy(muted = !it.muted) } },
+        onOpenHelpTour = { showManualQuickTour = true },
         onRefresh = { coordinator.refreshNow() }
       )
 
@@ -206,7 +210,8 @@ fun GameDayAppShell(
               uiState = uiState,
               coordinator = coordinator,
               onRequestNotificationPermission = onRequestNotificationPermission,
-              onOpenAddLeague = { showAddLeagueModal = true }
+              onOpenAddLeague = { showAddLeagueModal = true },
+              onOpenQuickTour = { showManualQuickTour = true }
             )
           }
         }
@@ -261,6 +266,18 @@ fun GameDayAppShell(
         }
       }
     }
+
+    if (!uiState.settings.hasCompletedQuickTour || showManualQuickTour) {
+      QuickTourDialog(
+        onSampleVoice = { coordinator.simulateNextLivePlay() },
+        onDismissAndComplete = {
+          showManualQuickTour = false
+          if (!uiState.settings.hasCompletedQuickTour) {
+            coordinator.updateSettings { it.copy(hasCompletedQuickTour = true) }
+          }
+        }
+      )
+    }
   }
 }
 
@@ -287,13 +304,15 @@ private fun TopBroadcastBar(
   compact: Boolean,
   onSelectScope: (AnnouncementScope) -> Unit,
   onToggleMute: () -> Unit,
+  onOpenHelpTour: () -> Unit,
   onRefresh: () -> Unit
 ) {
   val ext = LocalGameDayColors.current
+  val brandPrefix = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) "GameDay Live" else "MFL GameDay"
   val titleText = when (uiState.settings.operatingMode) {
-    OperatingMode.NFL_LIVE_ONLY -> "MFL GameDay · NFL Live"
-    OperatingMode.DEMO_SIMULATOR -> "MFL GameDay · Sunday Simulator"
-    else -> uiState.activeLeagueSnapshot?.config?.leagueName ?: "MFL GameDay Live"
+    OperatingMode.NFL_LIVE_ONLY -> "$brandPrefix · Live Scores"
+    OperatingMode.DEMO_SIMULATOR -> "$brandPrefix · Sunday Simulator"
+    else -> uiState.activeLeagueSnapshot?.config?.leagueName ?: brandPrefix
   }
 
   Surface(
@@ -362,6 +381,14 @@ private fun TopBroadcastBar(
           imageVector = if (uiState.settings.muted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
           contentDescription = if (uiState.settings.muted) "Unmute announcer" else "Mute announcer",
           tint = if (uiState.settings.muted) MaterialTheme.colorScheme.error else ext.turfAccent
+        )
+      }
+
+      IconButton(onClick = onOpenHelpTour) {
+        Icon(
+          imageVector = Icons.AutoMirrored.Filled.HelpOutline,
+          contentDescription = "Quick Tour & Help",
+          tint = MaterialTheme.colorScheme.onSurface
         )
       }
 

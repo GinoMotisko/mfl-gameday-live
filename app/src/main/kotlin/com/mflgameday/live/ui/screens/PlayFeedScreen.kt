@@ -58,6 +58,7 @@ import com.mflgameday.live.model.SpokenCategory
 import com.mflgameday.live.service.GameDayCoordinator
 import com.mflgameday.live.service.GameDayUiState
 import com.mflgameday.live.ui.components.ExposurePill
+import com.mflgameday.live.ui.components.TeamShieldBadge
 import com.mflgameday.live.ui.theme.LocalGameDayColors
 import java.time.Instant
 import java.time.ZoneId
@@ -196,6 +197,16 @@ private fun PlayLogCard(
     SpokenCategory.FANTASY_SWINGS -> Icons.Default.EmojiEvents to ext.mineBadge
     else -> Icons.Default.Schedule to ext.subtleText
   }
+  val shortTag = when (category) {
+    SpokenCategory.TOUCHDOWNS -> "TD"
+    SpokenCategory.FIELD_GOALS -> "FG"
+    SpokenCategory.TURNOVERS -> "TO"
+    SpokenCategory.SACKS -> "SACK"
+    SpokenCategory.RED_ZONE -> "RZ"
+    SpokenCategory.FANTASY_SWINGS -> "LEAD"
+    else -> "LIVE"
+  }
+  val playSide = entry.event.team
 
   Surface(
     color = ext.cardSurface,
@@ -214,14 +225,45 @@ private fun PlayLogCard(
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-      Box(
-        modifier = Modifier
-          .size(34.dp)
-          .clip(CircleShape)
-          .background(tint.copy(alpha = 0.16f)),
-        contentAlignment = Alignment.Center
+      Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(3.dp)
       ) {
-        Icon(icon, contentDescription = category.label, tint = tint, modifier = Modifier.size(18.dp))
+        if (playSide != null) {
+          TeamShieldBadge(
+            team = playSide.team,
+            size = 42.dp,
+            hasPossession = category == SpokenCategory.TOUCHDOWNS || category == SpokenCategory.RED_ZONE,
+            inRedZone = category == SpokenCategory.RED_ZONE,
+            logoUrlOverride = playSide.logoUrl
+          )
+        } else {
+          Box(
+            modifier = Modifier
+              .size(42.dp)
+              .clip(CircleShape)
+              .background(tint.copy(alpha = 0.16f)),
+            contentAlignment = Alignment.Center
+          ) {
+            Icon(icon, contentDescription = category.label, tint = tint, modifier = Modifier.size(20.dp))
+          }
+        }
+        Box(
+          modifier = Modifier
+            .clip(RoundedCornerShape(5.dp))
+            .background(tint.copy(alpha = 0.18f))
+            .border(0.75.dp, tint.copy(alpha = 0.55f), RoundedCornerShape(5.dp))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+          contentAlignment = Alignment.Center
+        ) {
+          Text(
+            text = shortTag,
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Black,
+            fontFamily = FontFamily.Monospace,
+            color = tint
+          )
+        }
       }
 
       Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {

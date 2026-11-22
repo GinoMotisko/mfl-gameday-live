@@ -333,7 +333,7 @@ private fun NflSideScoreRow(side: NflSide, game: NflGameState) {
   ) {
     TeamShieldBadge(
       team = side.team,
-      size = 38.dp,
+      size = 48.dp,
       hasPossession = hasBall,
       inRedZone = game.inRedZone,
       logoUrlOverride = side.logoUrl
@@ -387,14 +387,21 @@ private fun GameCenterDetailDialog(
   AlertDialog(
     onDismissRequest = onDismiss,
     title = {
-      Column {
-        Text("${game.away.fullName} at ${game.home.fullName}", fontWeight = FontWeight.ExtraBold)
-        Text(
-          text = "${game.away.team.code} ${game.away.score} – ${game.home.team.code} ${game.home.score} · ${game.statusDisplay()}" +
-            if (game.venue.isNotBlank()) " · ${game.venue}" else "",
-          style = MaterialTheme.typography.labelMedium,
-          color = ext.subtleText
-        )
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+      ) {
+        TeamShieldBadge(team = game.away.team, size = 44.dp, logoUrlOverride = game.away.logoUrl)
+        Column(modifier = Modifier.weight(1f)) {
+          Text("${game.away.fullName} at ${game.home.fullName}", fontWeight = FontWeight.ExtraBold)
+          Text(
+            text = "${game.away.team.code} ${game.away.score} – ${game.home.team.code} ${game.home.score} · ${game.statusDisplay()}" +
+              if (game.venue.isNotBlank()) " · ${game.venue}" else "",
+            style = MaterialTheme.typography.labelMedium,
+            color = ext.subtleText
+          )
+        }
+        TeamShieldBadge(team = game.home.team, size = 44.dp, logoUrlOverride = game.home.logoUrl)
       }
     },
     text = {

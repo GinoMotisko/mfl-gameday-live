@@ -39,7 +39,8 @@ MFL-GameDay-Android-app/
 │       │   │   └── ui/
 │       │   │       ├── GameDayAppShell.kt            # Responsive NavBar / NavRail / 3-Pane Command Center shell
 │       │   │       ├── components/
-│       │   │       │   └── BroadcastComponents.kt    # Celebration banner, speaking waveform, field bar, status bar
+│       │   │       │   ├── BroadcastComponents.kt    # 52dp unobstructed headshots, 48dp team shields, celebration banner
+│       │   │       │   └── QuickTourDialog.kt        # 4-step interactive first-open wizard & anytime ? help guide
 │       │   │       ├── screens/
 │       │   │       │   ├── FantasyMatchupsScreen.kt  # Multi-league split scoreboard, Best Ball & starter breakdowns
 │       │   │       │   ├── NflGamesScreen.kt         # Adaptive 1/2/3-col NFL grid, RedZone pulse, Game Center modal
