@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Broadcast radio / sound waves -->
+    <path
+        android:pathData="M74,34 C81,41 81,67 74,74"
+        android:strokeColor="#FF00E676"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M81,28 C91,38 91,70 81,80"
+        android:strokeColor="#8800E676"
+        android:strokeWidth="3.0"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <!-- Pro Football silhouette -->
+    <path
+        android:fillColor="#FFD97706"
+        android:strokeColor="#FFFFD54F"
+        android:strokeWidth="2.2"
+        android:pathData="M26,66 C24,47 39,32 58,34 C66,35 70,39 71,47 C73,66 58,81 39,79 C31,78 27,74 26,66 Z" />
+    <!-- Football laces -->
+    <path
+        android:pathData="M41,61 L56,46 M44,53 L49,58 M48,49 L53,54 M38,57 L43,62"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round" />
+</vector>
