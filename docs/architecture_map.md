@@ -8,7 +8,7 @@ MFL GameDay Live is a native Kotlin + Jetpack Compose Android application (`minS
 
 1. **`MflGameDayApp` (`Application`)**: Initializes the singleton `GameDayCoordinator` and configures `Coil` with `ImageDecoderDecoder` for native animated GIF rendering (supporting MFL commissioner/franchise helmet GIFs).
 2. **`MainActivity` (`ComponentActivity`)**: Edge-to-edge Compose host observing `GameDayCoordinator.uiState`, managing `WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON` for uninterrupted tablet/couch viewing, and requesting `POST_NOTIFICATIONS` on Android 13+.
-3. **`GameDayLiveService` (`LifecycleService`, `foregroundServiceType="mediaPlayback"`)**: Android 14–17 compliant Foreground Service with `PARTIAL_WAKE_LOCK` and persistent notification controls (`Mute/Unmute`, `Refresh`, `Stop`) so live polling and spoken TTS announcements run uninterrupted while the screen is off or in background apps.
+3. **`GameDayLiveService` (`LifecycleService`, `foregroundServiceType="mediaPlayback"`) + `ServiceLifecyclePolicy`**: Android 14–17 compliant Foreground Service with `PARTIAL_WAKE_LOCK` and persistent notification controls (`Mute/Unmute`, `Refresh`, `Stop`) so live polling and spoken TTS announcements run uninterrupted while the screen is off or in background apps, while cleanly stopping speech & polling when the user swipes the app closed from Recent Apps (`onTaskRemoved`) and automatically resuming on next launch (`MainActivity.onStart`).
 
 ## Component & Data Flow
 

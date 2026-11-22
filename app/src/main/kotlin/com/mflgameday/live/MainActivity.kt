@@ -26,6 +26,11 @@ import com.mflgameday.live.ui.theme.LocalGameDayColors
 import com.mflgameday.live.ui.theme.MFLGameDayTheme
 
 class MainActivity : ComponentActivity() {
+  override fun onStart() {
+    super.onStart()
+    (application as MflGameDayApp).coordinator.onAppForegrounded()
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()

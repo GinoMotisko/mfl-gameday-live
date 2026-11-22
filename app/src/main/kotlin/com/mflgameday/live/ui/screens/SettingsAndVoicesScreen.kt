@@ -485,6 +485,29 @@ fun SettingsAndVoicesScreen(
           onCheckedChange = { v -> coordinator.updateSettings { it.copy(runInBackgroundService = v) } }
         )
 
+        SettingSwitchRow(
+          title = "Stop Announcements When Swiped Closed",
+          subtitle = "Dismissing GameDay Live from Recent Apps stops voice & background polling until you reopen it (pressing Home or locking screen keeps it announcing)",
+          checked = settings.stopWhenSwipedClosed,
+          onCheckedChange = { v -> coordinator.updateSettings { it.copy(stopWhenSwipedClosed = v) } }
+        )
+
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          if (uiState.isBroadcastPaused) {
+            Button(onClick = { coordinator.resumeLiveBroadcastSession() }) {
+              Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(Modifier.width(6.dp))
+              Text("Resume Live Broadcast")
+            }
+          } else {
+            OutlinedButton(
+              onClick = { coordinator.pauseLiveBroadcastSession("Paused manually in Settings") }
+            ) {
+              Text("Pause Background Broadcast Now")
+            }
+          }
+        }
+
         HorizontalDivider(color = ext.cardBorder)
 
         Row(
