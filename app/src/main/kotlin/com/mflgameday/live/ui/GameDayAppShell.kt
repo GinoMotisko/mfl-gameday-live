@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SportsFootball
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -145,6 +146,31 @@ fun GameDayAppShell(
         onOpenHelpTour = { showManualQuickTour = true },
         onRefresh = { coordinator.refreshNow() }
       )
+
+      if (uiState.isBroadcastPaused) {
+        Surface(
+          color = ext.opponentBadge.copy(alpha = 0.16f),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 14.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+          ) {
+            Text(
+              text = "Live announcements & background polling are paused.",
+              style = MaterialTheme.typography.labelMedium,
+              fontWeight = FontWeight.SemiBold,
+              modifier = Modifier.weight(1f)
+            )
+            FilledTonalButton(onClick = { coordinator.resumeLiveBroadcastSession() }) {
+              Text("Resume Live")
+            }
+          }
+        }
+      }
 
       // Live TTS Speaking Equalizer / Replay Last Call Ribbon
       LiveSpeakingRibbon(

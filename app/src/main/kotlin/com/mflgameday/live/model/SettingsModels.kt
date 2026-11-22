@@ -147,6 +147,7 @@ data class GameDaySettings(
   val pollIntervalSeconds: Int = 30,
   val keepScreenAwake: Boolean = true,
   val runInBackgroundService: Boolean = true,
+  val stopWhenSwipedClosed: Boolean = true,
   val celebrationBannerAnimations: Boolean = true,
   val commandCenterSplitOnWideScreens: Boolean = true,
   val hasCompletedQuickTour: Boolean = false

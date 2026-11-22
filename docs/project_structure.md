@@ -35,7 +35,8 @@ MFL-GameDay-Android-app/
 │       │   │   │   └── SettingsModels.kt             # AppThemePreset (Auto Dark/Light + 5 themes), VoicePersona, GameDaySettings
 │       │   │   ├── service/
 │       │   │   │   ├── GameDayCoordinator.kt         # Application-scoped reactive polling & state orchestrator
-│       │   │   │   └── GameDayLiveService.kt         # Uninterrupted background Foreground Service + notification actions
+│       │   │   │   ├── GameDayLiveService.kt         # Uninterrupted background Foreground Service + swipe-close shutdown
+│       │   │   │   └── ServiceLifecyclePolicy.kt     # Pure lifecycle policy (Home background vs Recents swipe-close)
 │       │   │   └── ui/
 │       │   │       ├── GameDayAppShell.kt            # Responsive NavBar / NavRail / 3-Pane Command Center shell
 │       │   │       ├── components/

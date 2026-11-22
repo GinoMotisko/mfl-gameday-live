@@ -66,6 +66,7 @@ data class GameDayUiState(
   val statusMessage: String = "Ready",
   val warningMessage: String? = null,
   val isRefreshing: Boolean = false,
+  val isBroadcastPaused: Boolean = false,
   val lastUpdatedMillis: Long? = null,
   val nextRefreshAtMillis: Long? = null,
   val currentPollIntervalSec: Int = 30,
@@ -278,6 +279,7 @@ class GameDayCoordinator(
         statusMessage = "Live Demo Simulator Ready",
         warningMessage = null,
         isRefreshing = false,
+        isBroadcastPaused = false,
         lastUpdatedMillis = now,
         nextRefreshAtMillis = now + 30_000L,
         currentPollIntervalSec = 30
@@ -525,19 +527,70 @@ class GameDayCoordinator(
 
   fun startLiveEngine() {
     val mode = _uiState.value.settings.operatingMode
+    if (mode == OperatingMode.UNCONFIGURED) return
+    _uiState.update { it.copy(isBroadcastPaused = false) }
     if (mode == OperatingMode.DEMO_SIMULATOR) {
       if (_uiState.value.nflGames.isEmpty()) {
         startDemoSimulatorMode()
+      } else {
+        syncForegroundServiceState()
       }
       return
     }
-    if (pollLoopJob?.isActive == true) return
+    if (pollLoopJob?.isActive == true) {
+      syncForegroundServiceState()
+      return
+    }
     restartPollingLoop()
+  }
+
+  fun pauseLiveBroadcastSession(reason: String = "Broadcast paused") {
+    pollLoopJob?.cancel()
+    sleepJob?.cancel()
+    pollLoopJob = null
+    sleepJob = null
+    voiceEngine.stopAndClearQueue()
+    _uiState.update {
+      it.copy(
+        isBroadcastPaused = true,
+        isRefreshing = false,
+        nextRefreshAtMillis = null,
+        statusMessage = "$reason · Reopen or tap Resume"
+      )
+    }
+    DiagnosticsLogger.info(LogSubsystem.APP, reason)
+    GameDayLiveService.stop(appContext)
+  }
+
+  fun resumeLiveBroadcastSession() {
+    if (_uiState.value.settings.operatingMode == OperatingMode.UNCONFIGURED) return
+    _uiState.update { it.copy(isBroadcastPaused = false) }
+    if (_uiState.value.settings.operatingMode == OperatingMode.DEMO_SIMULATOR) {
+      _uiState.update { it.copy(statusMessage = "Live Demo Simulator Ready") }
+      syncForegroundServiceState()
+    } else {
+      restartPollingLoop()
+    }
+  }
+
+  fun onAppForegrounded() {
+    val state = _uiState.value
+    if (
+      ServiceLifecyclePolicy.shouldAutoResumeOnAppForeground(
+        settings = state.settings,
+        isBroadcastPaused = state.isBroadcastPaused,
+        isPollLoopActive = pollLoopJob?.isActive == true
+      )
+    ) {
+      DiagnosticsLogger.info(LogSubsystem.APP, "App reopened in foreground — resuming live broadcast")
+      resumeLiveBroadcastSession()
+    }
   }
 
   fun restartPollingLoop() {
     pollLoopJob?.cancel()
     sleepJob?.cancel()
+    _uiState.update { it.copy(isBroadcastPaused = false) }
     if (_uiState.value.settings.operatingMode == OperatingMode.DEMO_SIMULATOR) {
       startDemoSimulatorMode()
       return
@@ -1007,8 +1060,9 @@ class GameDayCoordinator(
   }
 
   private fun syncForegroundServiceState() {
-    val s = _uiState.value.settings
-    if (s.operatingMode != OperatingMode.UNCONFIGURED && s.runInBackgroundService) {
+    val state = _uiState.value
+    val s = state.settings
+    if (s.operatingMode != OperatingMode.UNCONFIGURED && s.runInBackgroundService && !state.isBroadcastPaused) {
       GameDayLiveService.start(appContext)
     } else {
       GameDayLiveService.stop(appContext)

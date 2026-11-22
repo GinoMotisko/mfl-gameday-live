@@ -148,7 +148,7 @@ class GameDayLiveService : LifecycleService() {
         coordinator.refreshNow()
       }
       ACTION_STOP_SERVICE -> {
-        coordinator.updateSettings { it.copy(runInBackgroundService = false) }
+        coordinator.pauseLiveBroadcastSession("Broadcast stopped from notification")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         return START_NOT_STICKY
@@ -162,7 +162,21 @@ class GameDayLiveService : LifecycleService() {
     }
 
     coordinator.startLiveEngine()
-    return START_STICKY
+    return if (coordinator.uiState.value.settings.stopWhenSwipedClosed) {
+      START_NOT_STICKY
+    } else {
+      START_STICKY
+    }
+  }
+
+  override fun onTaskRemoved(rootIntent: Intent?) {
+    val coordinator = (application as? MflGameDayApp)?.coordinator
+    if (coordinator != null && ServiceLifecyclePolicy.shouldStopOnTaskRemoved(coordinator.uiState.value.settings)) {
+      coordinator.pauseLiveBroadcastSession("Stopped when swiped closed from Recent Apps")
+      stopForeground(STOP_FOREGROUND_REMOVE)
+      stopSelf()
+    }
+    super.onTaskRemoved(rootIntent)
   }
 
   override fun onDestroy() {
