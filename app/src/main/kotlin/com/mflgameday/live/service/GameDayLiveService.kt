@@ -33,7 +33,14 @@ class GameDayLiveService : LifecycleService() {
     private const val ACTION_REFRESH_NOW = "com.mflgameday.live.ACTION_REFRESH_NOW"
     private const val ACTION_STOP_SERVICE = "com.mflgameday.live.ACTION_STOP_SERVICE"
 
+    @Volatile
+    internal var isRunningInForeground: Boolean = false
+
     fun start(context: Context) {
+      if (isRunningInForeground) {
+        notifySummaryUpdate(context)
+        return
+      }
       runCatching {
         val intent = Intent(context, GameDayLiveService::class.java)
         context.startForegroundService(intent)
@@ -41,14 +48,17 @@ class GameDayLiveService : LifecycleService() {
     }
 
     fun stop(context: Context) {
+      isRunningInForeground = false
       runCatching {
         context.stopService(Intent(context, GameDayLiveService::class.java))
       }
     }
 
     fun notifySummaryUpdate(context: Context) {
+      if (!isRunningInForeground) return
       val app = context.applicationContext as? MflGameDayApp ?: return
-      if (!app.coordinator.uiState.value.settings.runInBackgroundService) return
+      val state = app.coordinator.uiState.value
+      if (!state.settings.runInBackgroundService || state.isBroadcastPaused) return
       val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
       runCatching {
         nm.notify(NOTIFICATION_ID, buildNotification(context, app.coordinator))
@@ -148,6 +158,7 @@ class GameDayLiveService : LifecycleService() {
         coordinator.refreshNow()
       }
       ACTION_STOP_SERVICE -> {
+        isRunningInForeground = false
         coordinator.pauseLiveBroadcastSession("Broadcast stopped from notification")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -155,13 +166,25 @@ class GameDayLiveService : LifecycleService() {
       }
     }
 
+    if (coordinator.uiState.value.isBroadcastPaused) {
+      isRunningInForeground = false
+      stopForeground(STOP_FOREGROUND_REMOVE)
+      stopSelf()
+      return START_NOT_STICKY
+    }
+
+    val wasAlreadyForeground = isRunningInForeground
+    isRunningInForeground = true
+    if (!wasAlreadyForeground) {
+      com.mflgameday.live.diagnostics.GameDayTelemetry.recordServiceStart()
+    }
     val notification = buildNotification(this, coordinator)
     val fgsType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
     runCatching {
       ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, fgsType)
     }
 
-    coordinator.startLiveEngine()
+    coordinator.ensureEngineStartedFromService()
     return if (coordinator.uiState.value.settings.stopWhenSwipedClosed) {
       START_NOT_STICKY
     } else {
@@ -172,6 +195,8 @@ class GameDayLiveService : LifecycleService() {
   override fun onTaskRemoved(rootIntent: Intent?) {
     val coordinator = (application as? MflGameDayApp)?.coordinator
     if (coordinator != null && ServiceLifecyclePolicy.shouldStopOnTaskRemoved(coordinator.uiState.value.settings)) {
+      isRunningInForeground = false
+      com.mflgameday.live.diagnostics.GameDayTelemetry.recordSwipeCloseStop()
       coordinator.pauseLiveBroadcastSession("Stopped when swiped closed from Recent Apps")
       stopForeground(STOP_FOREGROUND_REMOVE)
       stopSelf()
@@ -180,6 +205,7 @@ class GameDayLiveService : LifecycleService() {
   }
 
   override fun onDestroy() {
+    isRunningInForeground = false
     releaseWakeLock()
     super.onDestroy()
   }

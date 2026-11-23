@@ -7,6 +7,7 @@ import coil.decode.ImageDecoderDecoder
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.mflgameday.live.diagnostics.DiagnosticsLogger
+import com.mflgameday.live.diagnostics.GameDayTelemetry
 import com.mflgameday.live.service.GameDayCoordinator
 
 class MflGameDayApp : Application(), ImageLoaderFactory {
@@ -16,6 +17,7 @@ class MflGameDayApp : Application(), ImageLoaderFactory {
   override fun onCreate() {
     super.onCreate()
     DiagnosticsLogger.install(this)
+    GameDayTelemetry.install(this)
     coordinator = GameDayCoordinator(this)
   }
 
