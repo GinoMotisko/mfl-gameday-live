@@ -93,7 +93,7 @@ class ClayPackAndPositionsTest {
   }
 
   @Test
-  fun `offensive team units (TMQB, TMPK, Off) trigger offensive events while Def triggers defensive events`() {
+  fun `offensive team units (TMQB, TMRB, TMWR, TMPK, Off) filter by participating position while Def triggers defensive events`() {
     val bufSide = NflSide("2", NflTeam("BUF"), "Buffalo", "Bills", 21)
     val kccSide = NflSide("12", NflTeam("KCC"), "Kansas City", "Chiefs", 17)
     val game = NflGameState(
@@ -107,41 +107,66 @@ class ClayPackAndPositionsTest {
       inRedZone = true
     )
 
+    val playersDb = mapOf(
+      "13593" to FantasyPlayer("13593", "Allen, Josh", "QB", NflTeam("BUF")),
+      "15709" to FantasyPlayer("15709", "Cook, James", "RB", NflTeam("BUF")),
+      "15754" to FantasyPlayer("15754", "Shakir, Khalil", "WR", NflTeam("BUF"))
+    )
+
+    val bufOff = FantasyPlayer("0600", "Bills, Buffalo", "Off", NflTeam("BUF"))
     val bufTmqb = FantasyPlayer("0601", "Bills, Buffalo", "TMQB", NflTeam("BUF"))
+    val bufTmrb = FantasyPlayer("0605", "Bills, Buffalo", "TMRB", NflTeam("BUF"))
+    val bufTmwr = FantasyPlayer("0610", "Bills, Buffalo", "TMWR", NflTeam("BUF"))
     val bufTmpk = FantasyPlayer("0621", "Bills, Buffalo", "TMPK", NflTeam("BUF"))
     val bufDef = FantasyPlayer("0501", "Bills, Buffalo", "Def", NflTeam("BUF"))
     val exposures = mapOf(
+      bufOff.id to PlayerCrossLeagueExposure(bufOff, ExposureRole.MINE, listOf("Dynasty"), emptyList()),
       bufTmqb.id to PlayerCrossLeagueExposure(bufTmqb, ExposureRole.MINE, listOf("Dynasty"), emptyList()),
+      bufTmrb.id to PlayerCrossLeagueExposure(bufTmrb, ExposureRole.MINE, listOf("Dynasty"), emptyList()),
+      bufTmwr.id to PlayerCrossLeagueExposure(bufTmwr, ExposureRole.MINE, listOf("Dynasty"), emptyList()),
       bufTmpk.id to PlayerCrossLeagueExposure(bufTmpk, ExposureRole.MINE, listOf("Dynasty"), emptyList()),
       bufDef.id to PlayerCrossLeagueExposure(bufDef, ExposureRole.OPPONENT, emptyList(), listOf("Dynasty"))
     )
 
-    val offTdEvent = GameEvent(
-      id = "ev_td",
+    // Passing TD from Josh Allen (QB) to Khalil Shakir (WR) -> matches Off, TMQB, TMWR, NOT TMRB/TMPK/Def
+    val passTdEvent = GameEvent(
+      id = "ev_pass_td",
       kind = GameEventKind.TOUCHDOWN,
       game = game,
       team = bufSide,
-      play = NflPlay("p1", 1, PlayKind.TOUCHDOWN, "Josh Allen 9 yd pass TD", offenseTeamId = "2"),
+      play = NflPlay("p1", 1, PlayKind.TOUCHDOWN, "J.Allen pass short right to K.Shakir for 9 yards, TOUCHDOWN.", offenseTeamId = "2"),
       awayScore = 21,
       homeScore = 17,
       observedAtMillis = 1000L
     )
-    val involvedOnOffTd = BestBallAndPaceCalculator.findInvolvedExposures(offTdEvent, exposures).map { it.player.id }
-    assertTrue("TMQB should match offensive TD", "0601" in involvedOnOffTd)
-    assertFalse("TMPK should not match offensive TD", "0621" in involvedOnOffTd)
-    assertFalse("Def should not match own offense TD", "0501" in involvedOnOffTd)
+    val involvedOnPassTd = BestBallAndPaceCalculator.findInvolvedExposures(passTdEvent, exposures, playersDb).map { it.player.id }.toSet()
+    assertEquals(setOf("0600", "0601", "0610"), involvedOnPassTd)
+
+    // Rushing TD by James Cook (RB) -> matches Off and TMRB ONLY (does NOT falsely match TMQB or TMWR)
+    val rushTdEvent = GameEvent(
+      id = "ev_rush_td",
+      kind = GameEventKind.TOUCHDOWN,
+      game = game,
+      team = bufSide,
+      play = NflPlay("p1b", 2, PlayKind.TOUCHDOWN, "J.Cook left tackle for 4 yards, TOUCHDOWN.", offenseTeamId = "2"),
+      awayScore = 28,
+      homeScore = 17,
+      observedAtMillis = 1500L
+    )
+    val involvedOnRushTd = BestBallAndPaceCalculator.findInvolvedExposures(rushTdEvent, exposures, playersDb).map { it.player.id }.toSet()
+    assertEquals(setOf("0600", "0605"), involvedOnRushTd)
 
     val fgEvent = GameEvent(
       id = "ev_fg",
       kind = GameEventKind.FIELD_GOAL,
       game = game,
       team = bufSide,
-      play = NflPlay("p2", 2, PlayKind.FIELD_GOAL, "Tyler Bass 44 yd FG GOOD", offenseTeamId = "2"),
-      awayScore = 24,
+      play = NflPlay("p2", 3, PlayKind.FIELD_GOAL, "Tyler Bass 44 yd FG GOOD", offenseTeamId = "2"),
+      awayScore = 31,
       homeScore = 17,
       observedAtMillis = 2000L
     )
-    val involvedOnFg = BestBallAndPaceCalculator.findInvolvedExposures(fgEvent, exposures).map { it.player.id }
+    val involvedOnFg = BestBallAndPaceCalculator.findInvolvedExposures(fgEvent, exposures, playersDb).map { it.player.id }
     assertEquals(listOf("0621"), involvedOnFg)
 
     val sackEvent = GameEvent(
@@ -149,12 +174,12 @@ class ClayPackAndPositionsTest {
       kind = GameEventKind.SACK,
       game = game,
       team = bufSide,
-      play = NflPlay("p3", 3, PlayKind.SACK, "Greg Rousseau sacks Patrick Mahomes", offenseTeamId = "12"),
-      awayScore = 24,
+      play = NflPlay("p3", 4, PlayKind.SACK, "Greg Rousseau sacks Patrick Mahomes", offenseTeamId = "12"),
+      awayScore = 31,
       homeScore = 17,
       observedAtMillis = 3000L
     )
-    val involvedOnSack = BestBallAndPaceCalculator.findInvolvedExposures(sackEvent, exposures).map { it.player.id }
+    val involvedOnSack = BestBallAndPaceCalculator.findInvolvedExposures(sackEvent, exposures, playersDb).map { it.player.id }
     assertEquals(listOf("0501"), involvedOnSack)
   }
 

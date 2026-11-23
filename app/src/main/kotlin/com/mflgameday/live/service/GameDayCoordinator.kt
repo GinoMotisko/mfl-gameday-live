@@ -1094,7 +1094,7 @@ class GameDayCoordinator(
     val newEntries = ArrayList<PlayLogEntry>(events.size)
 
     for (event in events) {
-      val involved = BestBallAndPaceCalculator.findInvolvedExposures(event, exposures)
+      val involved = BestBallAndPaceCalculator.findInvolvedExposures(event, exposures, state.playersDb)
       val category = SpokenCategory.forEvent(event.kind)
       val relevant = BestBallAndPaceCalculator.isEventRelevantForScope(
         event = event,
@@ -1175,7 +1175,7 @@ class GameDayCoordinator(
     if (nameExpander == null && playersDb.isNotEmpty()) {
       nameExpander = PlayerNameExpander(playersDb.values)
     }
-    val involved = BestBallAndPaceCalculator.findInvolvedExposures(event, exposures)
+    val involved = BestBallAndPaceCalculator.findInvolvedExposures(event, exposures, playersDb)
     val involvesMine = involved.any { it.role == ExposureRole.MINE || it.role == ExposureRole.CONFLICT }
     val involvesOpp = involved.any { it.role == ExposureRole.OPPONENT || it.role == ExposureRole.CONFLICT }
     val isConflict = involved.any { it.role == ExposureRole.CONFLICT }
