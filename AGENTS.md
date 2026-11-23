@@ -68,3 +68,18 @@ Whenever publishing a new GitHub Release (`vX.Y.Z` marked `--latest`):
 5. **CLI & Connectors First (Browser as Last Resort)**:
    - Always prefer direct CLIs and MCP connectors (`gh`, `vercel`, `railway`, `op` 1Password CLI, `ExchangeOnlineManagement` PowerShell, Google Drive/Docs plugins, local `G:\` Google Drive mount) over web-browser automation unless an interactive human-only UI has no CLI/API.
 
+
+---
+
+## 6. Google Play Packaging, Graphics & Official API Publishing Rules
+
+1. **20-Asset `24-bit RGB` Store Matrix (`scripts/build-play-store-assets.mjs`)**:
+   - Export all Play Store graphics as **24-bit RGB PNG (`channels === 3`, `hasAlpha === false`)** using a two-pass `sharp(svg).composite(...).toBuffer() -> sharp(buf).flatten(...).removeAlpha()` pipeline (calling `.composite()` after `.flatten()` in one chain re-introduces an alpha channel).
+   - Always generate all 5 visual slots (20 files): App Icon (`512×512`), Feature Graphic (`1024×500`), Phone (`6 × 1080×1920`), **Foldable (`4`: `1:1` `2048×2048`, `4:3` `2048×1536`, `10:16` `1200×1920`)**, 7" Tablet (`4 × 1920×1080`), and 10" Tablet (`4 × 2560×1440`). Leave the optional Store Listing YouTube trailer blank.
+2. **`.aab` R8 Mapping & Native Symbols**:
+   - AGP 8+ automatically embeds `BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map` inside `app-playStore-release.aab` (verify via `tar -tf`).
+3. **First-Party Google Play API Only (Zero Unvetted Third-Party Publishing MCPs)**:
+   - Never pass Google Play Release Manager Service Account credentials to unvetted community MCP servers or indie CLIs.
+   - Use **Google LLC's official first-party `Google Play Developer API` (`@googleapis/androidpublisher` / `google-api-python-client`) + `Play Developer Reporting API`** (or vetted industry standards **Fastlane `supply`** / **Gradle Play Publisher `com.github.triplet.play`**), with credentials injected ephemerally in-memory via `1Password CLI` (`op`).
+   - Note Google's official API boundary: initial app creation, build `#1` upload, and legal *App content* questionnaires are UI-only once per app; all subsequent `.aab` uploads, track promotions (`internal -> production`), staged rollouts, store listings, reviews, and Vitals crash/ANR queries run 100% via API.
+4. **Active Engineering Backlog**: Tracked in GitHub Issues (`gh issue list --repo GinoMotisko/mfl-gameday-live` — Issues `#5`–`#9`).
