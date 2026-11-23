@@ -121,6 +121,7 @@ class GameDayCoordinator(
   private var nameExpander: PlayerNameExpander? = null
   private val cachedProjectionsByLeague = HashMap<String, Map<String, Double>>()
   private val cachedFranchisesByLeague = HashMap<String, Map<String, FranchiseInfo>>()
+  private val pendingBreakdownRetryByLeague = HashSet<String>()
   private var mflScheduleEtag: String? = null
   private var lastStatusSyncMillis: Long = 0L
   private var pollLoopJob: Job? = null
@@ -926,9 +927,10 @@ class GameDayCoordinator(
           val needBreakdowns = forceScheduleReload ||
             prevSnap == null ||
             prevSnap.week != week ||
+            leagueCfg.leagueId in pendingBreakdownRetryByLeague ||
             hasAnyScoreChanged(prevSnap, rawMatchups)
 
-          val breakdowns = if (needBreakdowns) {
+          val breakdownResult = if (needBreakdowns) {
             nonCancellingCatching {
               mflClient.fetchScoringBreakdowns(
                 config = leagueCfg,
@@ -936,23 +938,45 @@ class GameDayCoordinator(
                 apiKey = apiKey,
                 mflUserIdCookie = cookie
               )
-            }.getOrDefault(emptyMap())
+            }
           } else {
-            emptyMap()
+            null
           }
 
           if (!canEmitForCycle(cycleGen)) return
           GameDayTelemetry.recordMflPoll(success = true)
 
-          val mergedBreakdowns = if (breakdowns.isNotEmpty()) {
-            breakdowns
-          } else {
-            // Preserve previous breakdowns if HTML fetch was skipped/throttled
-            prevSnap?.matchups
-              ?.flatMap { it.franchises }
-              ?.flatMap { it.starters + it.bench }
-              ?.associate { it.playerId to it.breakdowns }
-              .orEmpty()
+          val previousSameWeekBreakdowns = prevSnap
+            ?.takeIf { it.week == week }
+            ?.matchups
+            ?.flatMap { it.franchises }
+            ?.flatMap { it.starters + it.bench }
+            ?.associate { it.playerId to it.breakdowns }
+            .orEmpty()
+
+          val hasNonZeroScores = rawMatchups
+            .flatMap { it.franchises }
+            .any { side ->
+              kotlin.math.abs(side.score) > 0.001 ||
+                side.players.any { kotlin.math.abs(it.score) > 0.001 }
+            }
+
+          val mergedBreakdowns = when {
+            breakdownResult == null -> previousSameWeekBreakdowns
+            breakdownResult.isSuccess -> {
+              val fetched = breakdownResult.getOrThrow()
+              if (fetched.isEmpty() && hasNonZeroScores) {
+                pendingBreakdownRetryByLeague.add(leagueCfg.leagueId)
+                previousSameWeekBreakdowns
+              } else {
+                pendingBreakdownRetryByLeague.remove(leagueCfg.leagueId)
+                fetched
+              }
+            }
+            else -> {
+              pendingBreakdownRetryByLeague.add(leagueCfg.leagueId)
+              previousSameWeekBreakdowns
+            }
           }
 
           val snapshot = BestBallAndPaceCalculator.buildLeagueSnapshot(
