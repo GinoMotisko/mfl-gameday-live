@@ -2,10 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Google Play Policy: remove REQUEST_IGNORE_BATTERY_OPTIMIZATIONS on the Play Store track
-         (mediaPlayback Foreground Service + WakeLock already keeps audio uninterrupted). -->
+    <!-- Google Play Policy: remove REQUEST_IGNORE_BATTERY_OPTIMIZATIONS and AD_ID on the Play Store track -->
     <uses-permission
         android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+        tools:node="remove" />
+    <uses-permission
+        android:name="com.google.android.gms.permission.AD_ID"
         tools:node="remove" />
 
 </manifest>

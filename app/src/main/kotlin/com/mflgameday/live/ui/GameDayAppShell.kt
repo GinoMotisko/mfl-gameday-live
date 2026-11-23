@@ -71,7 +71,7 @@ import com.mflgameday.live.ui.theme.LocalGameDayColors
 
 enum class MainTab(val label: String, val icon: ImageVector) {
   FANTASY("Fantasy", Icons.Default.EmojiEvents),
-  NFL_GAMES("NFL Live", Icons.Default.SportsFootball),
+  NFL_GAMES(if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) "Live Games" else "NFL Live", Icons.Default.SportsFootball),
   PLAY_FEED("Plays", Icons.Default.Campaign),
   SETTINGS("Settings", Icons.Default.Settings)
 }

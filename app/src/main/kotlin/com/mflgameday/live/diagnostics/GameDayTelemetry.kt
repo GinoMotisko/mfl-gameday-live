@@ -80,6 +80,7 @@ object GameDayTelemetry {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private val persistMutex = Mutex()
   private val beaconMutex = Mutex()
+  private val fileIoLock = Any()
   private var initCompleted = CompletableDeferred<Unit>()
   private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = false }
   private val httpClient = OkHttpClient.Builder()
@@ -186,12 +187,14 @@ object GameDayTelemetry {
   fun recordCrashSynchronously() {
     val file = metricsFile ?: return
     runCatching {
-      val updated = synchronized(this) {
-        val next = _snapshot.value.copy(crashCount = _snapshot.value.crashCount + 1L)
-        _snapshot.value = next
-        next
+      synchronized(fileIoLock) {
+        val next = synchronized(this@GameDayTelemetry) {
+          val updated = _snapshot.value.copy(crashCount = _snapshot.value.crashCount + 1L)
+          _snapshot.value = updated
+          updated
+        }
+        writeSnapshotAtomicallyLocked(file, next)
       }
-      writeSnapshotAtomically(file, updated)
     }
   }
 
@@ -299,23 +302,32 @@ object GameDayTelemetry {
   private suspend fun persistLatestOrdered() {
     val file = metricsFile ?: return
     persistMutex.withLock {
-      val latest = synchronized(this@GameDayTelemetry) { _snapshot.value }
-      runCatching { writeSnapshotAtomically(file, latest) }
+      runCatching {
+        synchronized(fileIoLock) {
+          val latest = synchronized(this@GameDayTelemetry) { _snapshot.value }
+          writeSnapshotAtomicallyLocked(file, latest)
+        }
+      }
     }
   }
 
-  private fun writeSnapshotAtomically(file: File, snap: TelemetrySnapshot) {
-    val tmpFile = File(file.parentFile, "${file.name}.tmp")
-    tmpFile.writeText(json.encodeToString(snap))
+  private fun writeSnapshotAtomicallyLocked(file: File, snap: TelemetrySnapshot) {
+    val parentDir = file.parentFile ?: file.absoluteFile.parentFile ?: return
+    val tmpPath = Files.createTempFile(parentDir.toPath(), file.name, ".tmp")
     try {
-      Files.move(
-        tmpFile.toPath(),
-        file.toPath(),
-        StandardCopyOption.REPLACE_EXISTING,
-        StandardCopyOption.ATOMIC_MOVE
-      )
-    } catch (_: Exception) {
-      Files.move(tmpFile.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+      tmpPath.toFile().writeText(json.encodeToString(snap))
+      try {
+        Files.move(
+          tmpPath,
+          file.toPath(),
+          StandardCopyOption.REPLACE_EXISTING,
+          StandardCopyOption.ATOMIC_MOVE
+        )
+      } catch (_: Exception) {
+        Files.move(tmpPath, file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+      }
+    } finally {
+      runCatching { Files.deleteIfExists(tmpPath) }
     }
   }
 }

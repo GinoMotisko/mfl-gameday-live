@@ -224,7 +224,7 @@ fun SettingsAndVoicesScreen(
           ) {
             Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(4.dp))
-            Text("Sample 94-Yd Bucs TD")
+            Text(if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) "Sample 94-Yd Pass TD" else "Sample 94-Yd Bucs TD")
           }
 
           FilledTonalButton(
@@ -262,7 +262,7 @@ fun SettingsAndVoicesScreen(
         title = "Spoken Event Ticks & Scope",
         icon = { Icon(Icons.Default.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
       ) {
-        Text("Which NFL games should be announced out loud?", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        Text("Which live games should be announced out loud?", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
         AnnouncementScope.entries.forEach { sc ->
           Row(
             modifier = Modifier
@@ -416,7 +416,13 @@ fun SettingsAndVoicesScreen(
           Button(onClick = { coordinator.refreshNflScheduleAndPlayers() }) {
             Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
-            Text("Refresh NFL Schedule & Player DB")
+            Text(
+              if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) {
+                "Refresh Schedule & Player DB"
+              } else {
+                "Refresh NFL Schedule & Player DB"
+              }
+            )
           }
           FilledTonalButton(onClick = onOpenAddLeague) {
             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))

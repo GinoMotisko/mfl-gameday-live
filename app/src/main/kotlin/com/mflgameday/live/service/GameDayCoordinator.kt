@@ -122,6 +122,7 @@ class GameDayCoordinator(
   private val cachedProjectionsByLeague = HashMap<String, Map<String, Double>>()
   private val cachedFranchisesByLeague = HashMap<String, Map<String, FranchiseInfo>>()
   private var mflScheduleEtag: String? = null
+  private var lastStatusSyncMillis: Long = 0L
   private var pollLoopJob: Job? = null
   private var sleepJob: Job? = null
   private var bannerDismissJob: Job? = null
@@ -766,10 +767,11 @@ class GameDayCoordinator(
 
   private suspend fun initializeSeasonAndPlayers(forcePlayerRefresh: Boolean) {
     _uiState.update { it.copy(isRefreshing = true, statusMessage = "Connecting to MyFantasyLeague…") }
-    val status = runCatching { mflClient.fetchStatus() }.getOrNull()
+    val status = nonCancellingCatching { mflClient.fetchStatus() }.getOrNull()
     val year = status?.year ?: _uiState.value.currentSeasonYear
     val week = status?.liveScoringWeek ?: _uiState.value.currentWeek
-    _uiState.update { it.copy(currentSeasonYear = year, currentWeek = week) }
+    lastStatusSyncMillis = System.currentTimeMillis()
+    applySeasonAndWeek(year = year, week = week)
 
     val cachedJson = if (forcePlayerRefresh) null else storage.loadCachedPlayersJson(year)
     val playersMap: Map<String, FantasyPlayer> = if (cachedJson != null) {
@@ -802,6 +804,18 @@ class GameDayCoordinator(
     }
     val now = System.currentTimeMillis()
     _uiState.update { it.copy(isRefreshing = true, statusMessage = "Updating live scores…") }
+
+    // Periodic 30-minute week-rollover check for always-on bar/countertop tablets
+    if (_uiState.value.settings.operatingMode == OperatingMode.MFL_AND_NFL_LIVE &&
+      (now - lastStatusSyncMillis) >= 30L * 60L * 1000L
+    ) {
+      val periodicStatus = nonCancellingCatching { mflClient.fetchStatus() }.getOrNull()
+      if (periodicStatus != null && canEmitForCycle(cycleGen)) {
+        lastStatusSyncMillis = now
+        applySeasonAndWeek(year = periodicStatus.year, week = periodicStatus.liveScoringWeek)
+      }
+    }
+
     val warnings = ArrayList<String>()
     val detectedEvents = ArrayList<GameEvent>()
     var week = _uiState.value.currentWeek
@@ -814,6 +828,7 @@ class GameDayCoordinator(
       val board = espnClient.fetchScoreboard()
       if (!canEmitForCycle(cycleGen)) return
       if (board.weekNumber != null && _uiState.value.settings.operatingMode == OperatingMode.NFL_LIVE_ONLY) {
+        applySeasonAndWeek(year = year, week = board.weekNumber)
         week = board.weekNumber
       }
       espnSucceeded = board.games.isNotEmpty()
@@ -889,12 +904,15 @@ class GameDayCoordinator(
             cachedFranchisesByLeague[leagueCfg.leagueId] = franchisesMap
           }
 
-          var projections = cachedProjectionsByLeague[leagueCfg.leagueId]
+          val projKey = "${leagueCfg.leagueId}_w$week"
+          var projections = cachedProjectionsByLeague[projKey]
           if (projections == null || forceScheduleReload) {
             projections = nonCancellingCatching {
               mflClient.fetchProjectedScores(leagueCfg, week, apiKey = apiKey, mflUserIdCookie = cookie)
             }.getOrDefault(emptyMap())
-            cachedProjectionsByLeague[leagueCfg.leagueId] = projections
+            if (projections.isNotEmpty()) {
+              cachedProjectionsByLeague[projKey] = projections
+            }
           }
 
           val rawMatchups = mflClient.fetchLiveScoring(
@@ -904,19 +922,28 @@ class GameDayCoordinator(
             mflUserIdCookie = cookie
           )
 
-          val breakdowns = nonCancellingCatching {
-            mflClient.fetchScoringBreakdowns(
-              config = leagueCfg,
-              week = week,
-              apiKey = apiKey,
-              mflUserIdCookie = cookie
-            )
-          }.getOrDefault(emptyMap())
+          val prevSnap = updatedSnapshots[leagueCfg.leagueId]
+          val needBreakdowns = forceScheduleReload ||
+            prevSnap == null ||
+            prevSnap.week != week ||
+            hasAnyScoreChanged(prevSnap, rawMatchups)
+
+          val breakdowns = if (needBreakdowns) {
+            nonCancellingCatching {
+              mflClient.fetchScoringBreakdowns(
+                config = leagueCfg,
+                week = week,
+                apiKey = apiKey,
+                mflUserIdCookie = cookie
+              )
+            }.getOrDefault(emptyMap())
+          } else {
+            emptyMap()
+          }
 
           if (!canEmitForCycle(cycleGen)) return
           GameDayTelemetry.recordMflPoll(success = true)
 
-          val prevSnap = updatedSnapshots[leagueCfg.leagueId]
           val mergedBreakdowns = if (breakdowns.isNotEmpty()) {
             breakdowns
           } else {
@@ -1135,6 +1162,48 @@ class GameDayCoordinator(
       ?: return 180
     val untilKickoffSec = ((nextKickoff - now) / 1000L) - 30L
     return untilKickoffSec.coerceIn(30L, 240L).toInt()
+  }
+
+  private fun applySeasonAndWeek(year: Int, week: Int) {
+    val prevYear = _uiState.value.currentSeasonYear
+    val prevWeek = _uiState.value.currentWeek
+    val hadLoadedData = _uiState.value.lastUpdatedMillis != null || _uiState.value.leagueSnapshots.isNotEmpty()
+    if (hadLoadedData && (year != prevYear || week != prevWeek)) {
+      DiagnosticsLogger.info(LogSubsystem.APP, "Season/Week rolled over ($prevYear W$prevWeek -> $year W$week) — resetting weekly play ticker")
+      differ.reset()
+      mflScheduleEtag = null
+      _uiState.update {
+        it.copy(
+          currentSeasonYear = year,
+          currentWeek = week,
+          leagueSnapshots = emptyMap(),
+          playLog = emptyList(),
+          activeBannerAlert = null
+        )
+      }
+      scope.launch { storage.savePlayLog(emptyList()) }
+    } else {
+      _uiState.update { it.copy(currentSeasonYear = year, currentWeek = week) }
+    }
+  }
+
+  private fun hasAnyScoreChanged(
+    prevSnap: LeagueLiveSnapshot,
+    rawMatchups: List<com.mflgameday.live.data.RawMflMatchup>
+  ): Boolean {
+    val prevByFranchise = prevSnap.matchups.flatMap { it.franchises }.associateBy { it.franchiseId }
+    for (m in rawMatchups) {
+      for (f in m.franchises) {
+        val prevF = prevByFranchise[f.franchiseId] ?: return true
+        if (kotlin.math.abs(prevF.score - f.score) > 0.001) return true
+        val prevPlayers = (prevF.starters + prevF.bench).associate { it.playerId to it.score }
+        for (p in f.players) {
+          val prevP = prevPlayers[p.playerId] ?: return true
+          if (kotlin.math.abs(prevP - p.score) > 0.001) return true
+        }
+      }
+    }
+    return false
   }
 
   private suspend fun canEmitForCycle(cycleGen: Long): Boolean =

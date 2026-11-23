@@ -372,7 +372,7 @@ private fun MatchupSummaryCard(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(7.dp)
         ) {
-          if (!side.logoUrl.isNullOrBlank()) {
+          if (!com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD && !side.logoUrl.isNullOrBlank()) {
             AsyncImage(
               model = side.logoUrl,
               contentDescription = null,
@@ -701,7 +701,7 @@ private fun HeroTeamSide(
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-      if (!alignEnd && !side.logoUrl.isNullOrBlank()) {
+      if (!alignEnd && !com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD && !side.logoUrl.isNullOrBlank()) {
         AsyncImage(
           model = side.logoUrl,
           contentDescription = null,
@@ -719,7 +719,7 @@ private fun HeroTeamSide(
         maxLines = 1,
         overflow = TextOverflow.Ellipsis
       )
-      if (alignEnd && !side.logoUrl.isNullOrBlank()) {
+      if (alignEnd && !com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD && !side.logoUrl.isNullOrBlank()) {
         AsyncImage(
           model = side.logoUrl,
           contentDescription = null,
