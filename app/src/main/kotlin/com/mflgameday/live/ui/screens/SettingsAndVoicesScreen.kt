@@ -81,6 +81,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.mflgameday.live.diagnostics.DiagnosticsLogger
+import com.mflgameday.live.diagnostics.GameDayTelemetry
 import com.mflgameday.live.diagnostics.LogLevel
 import com.mflgameday.live.model.AnnouncementScope
 import com.mflgameday.live.model.AppThemePreset
@@ -576,12 +577,13 @@ fun SettingsAndVoicesScreen(
         }
       }
 
-      // Section 6: Diagnostics, Health & Crash Log Collector
+      // Section 6: Diagnostics, Telemetry & Crash Log Collector
       SettingsSectionCard(
-        title = "Diagnostics, Health & Crash Log Collector",
+        title = "Diagnostics, Telemetry & Crash Log Collector",
         icon = { Icon(Icons.Default.BugReport, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
       ) {
         val warnOrErrorCount = uiState.diagnosticEntries.count { it.level != LogLevel.INFO }
+        val tel = uiState.telemetrySnapshot
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
           FilterChip(
             selected = uiState.isNetworkAvailable,
@@ -597,6 +599,45 @@ fun SettingsAndVoicesScreen(
             selected = warnOrErrorCount == 0,
             onClick = { showDiagnosticsDialog = true },
             label = { Text("Events: ${uiState.diagnosticEntries.size} ($warnOrErrorCount alerts)") }
+          )
+          FilterChip(
+            selected = tel.pollSuccessRatePct >= 95,
+            onClick = {},
+            label = { Text("Poll Health: ${tel.pollSuccessRatePct}% (${tel.totalPolls} polls)") }
+          )
+          FilterChip(
+            selected = tel.espnAvgLatencyMs in 1..1500,
+            onClick = {},
+            label = { Text("Avg Latency: ${tel.espnAvgLatencyMs}ms") }
+          )
+          FilterChip(
+            selected = tel.ttsAnnouncementsSpoken > 0,
+            onClick = {},
+            label = { Text("Spoken Calls: ${tel.ttsAnnouncementsSpoken} · ETag 304s: ${tel.mflEtagHits}") }
+          )
+        }
+
+        SettingSwitchRow(
+          title = "Share Anonymous Crash & Feed Health Telemetry (Opt-In)",
+          subtitle = "Sends redacted non-PII poll health & crash stack traces to Motisko Ventures LLC (zero usernames, cookies, or league IDs)",
+          checked = settings.optInAnonymousTelemetry,
+          onCheckedChange = { enabled ->
+            coordinator.updateSettings { it.copy(optInAnonymousTelemetry = enabled) }
+            if (enabled) {
+              GameDayTelemetry.maybeSendAutoHeartbeat(
+                operatingMode = settings.operatingMode.name,
+                optInEnabled = true,
+                lastCrash = uiState.lastCrashReport
+              )
+            }
+          }
+        )
+
+        if (!uiState.telemetryBeaconStatus.isNullOrBlank()) {
+          Text(
+            text = uiState.telemetryBeaconStatus,
+            style = MaterialTheme.typography.labelSmall,
+            color = ext.turfAccent
           )
         }
 
@@ -652,6 +693,16 @@ fun SettingsAndVoicesScreen(
             Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text("Email Support")
+          }
+          OutlinedButton(
+            onClick = {
+              GameDayTelemetry.sendManualSnapshotNow(
+                operatingMode = settings.operatingMode.name,
+                lastCrash = uiState.lastCrashReport
+              )
+            }
+          ) {
+            Text("Send Health Snapshot")
           }
           OutlinedButton(onClick = onOpenQuickTour) {
             Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = null, modifier = Modifier.size(18.dp))

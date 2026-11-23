@@ -34,7 +34,7 @@ flowchart TD
 
     subgraph Runtime["Service, Audio & UI"]
         Coord["GameDayCoordinator\nApplication-Scoped StateFlow +\nConnectivity Auto-Recovery"]
-        Diag["DiagnosticsLogger\nChained Crash Catcher +\nRedacted Ring-Buffer Console"]
+        Diag["DiagnosticsLogger + GameDayTelemetry\nChained Crash Catcher · Redacted Ring-Buffer\nFeed Latency & Opt-In Anonymous Health Beacon"]
         Voice["GameDayVoiceEngine + StadiumSoundSynthesizer\nAndroid TextToSpeech · Self-Healing Rebind\n16-bit PCM Broadcast Stingers"]
         FGS["GameDayLiveService\nmediaPlayback Foreground Service"]
         UI["Jetpack Compose Adaptive Shell\nTab S10+ · All Tablets · Pixel Fold · Phone\nAuto Dark/Light + 5 Broadcast Themes\nOfficial NFL Logos & Player Headshots"]

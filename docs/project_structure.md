@@ -22,7 +22,8 @@ MFL-GameDay-Android-app/
 │       │   │   │   ├── MflApiClient.kt               # Throttled/retry-hardened MFL login, myleagues, league, liveScoring
 │       │   │   │   └── ScoringBreakdownParser.kt     # HTML parser for MFL live_scoring_summary category points
 │       │   │   ├── diagnostics/
-│       │   │   │   └── DiagnosticsLogger.kt          # Uncaught crash logger, secret-redacted ring buffer & share/copy export
+│       │   │   │   ├── DiagnosticsLogger.kt          # Uncaught crash logger, secret-redacted ring buffer & share/copy export
+│       │   │   │   └── GameDayTelemetry.kt           # Non-PII feed latency, poll health & opt-in anonymous telemetry reporter
 │       │   │   ├── engine/
 │       │   │   │   ├── BestBallAndPaceCalculator.kt  # Win probability, pace projections, Best Ball & Cross-League Exposure
 │       │   │   │   ├── DemoSimulatorData.kt          # Dual-league showcase dataset + live burst play generator

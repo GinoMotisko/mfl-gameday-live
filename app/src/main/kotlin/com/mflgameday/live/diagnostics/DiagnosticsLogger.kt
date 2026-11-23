@@ -177,6 +177,7 @@ object DiagnosticsLogger {
       stackTrace = redactSecrets(stackTraceString(throwable).take(4000)),
       deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})"
     )
+    GameDayTelemetry.recordCrashDetected()
     File(dir, "last_crash.json").writeText(json.encodeToString(summary))
   }
 
@@ -202,6 +203,9 @@ object DiagnosticsLogger {
     sb.appendLine("=== MFL GameDay Live Diagnostic Report ===")
     sb.appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE}, SDK ${Build.VERSION.SDK_INT})")
     sb.appendLine("Generated: ${fmt.format(Instant.now())}")
+    sb.appendLine()
+    sb.appendLine("--- TELEMETRY SNAPSHOT JSON ---")
+    sb.appendLine(GameDayTelemetry.encodeJsonSummary())
     _lastCrash.value?.let { crash ->
       sb.appendLine()
       sb.appendLine("--- LAST CAPTURED CRASH (${fmt.format(Instant.ofEpochMilli(crash.timestampMillis))}) ---")
