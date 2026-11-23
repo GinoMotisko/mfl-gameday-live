@@ -358,7 +358,7 @@ object BestBallAndPaceCalculator {
     return exposures.values.filter { exp ->
       val p = exp.player
       if (p.team !in gameTeams) return@filter false
-      if (p.isTeamDefense) {
+      if (p.isDefensiveTeamUnit) {
         val evTeam = event.team ?: return@filter false
         if (evTeam.team != p.team) return@filter false
         when (event.kind) {
@@ -369,6 +369,21 @@ object BestBallAndPaceCalculator {
           GameEventKind.FOURTH_DOWN_STOP -> true
           GameEventKind.TOUCHDOWN -> play.offenseTeamId != null && play.offenseTeamId != evTeam.espnId
           else -> false
+        }
+      } else if (p.isOffensiveTeamUnit) {
+        val evTeam = event.team ?: return@filter false
+        if (evTeam.team != p.team) return@filter false
+        when {
+          p.position.equals("TMPN", ignoreCase = true) -> false
+          p.position.equals("TMPK", ignoreCase = true) ->
+            event.kind == GameEventKind.FIELD_GOAL || event.kind == GameEventKind.TRY_FAILED
+          else -> when (event.kind) {
+            GameEventKind.TOUCHDOWN -> play.offenseTeamId == null || play.offenseTeamId == evTeam.espnId
+            GameEventKind.TWO_POINT_GOOD,
+            GameEventKind.BIG_PLAY,
+            GameEventKind.FIRST_DOWN -> true
+            else -> false
+          }
         }
       } else {
         combinedText.contains(p.displayName, ignoreCase = true) ||

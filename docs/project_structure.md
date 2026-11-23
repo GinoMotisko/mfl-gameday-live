@@ -16,6 +16,7 @@ MFL-GameDay-Android-app/
 │       │   │   │   ├── GameDayVoiceEngine.kt         # Multi-voice Android TTS queue, personas & audio ducking
 │       │   │   │   └── StadiumSoundSynthesizer.kt    # Pure 16-bit PCM stadium brass/radar/whistle stingers
 │       │   │   ├── data/
+│       │   │   │   ├── ClayPackManager.kt            # ETag conditional delta manifest sync & O(1) head URL resolver
 │       │   │   │   ├── EspnApiClient.kt              # Real-time NFL scoreboard, team logos, situation & play-by-play
 │       │   │   │   ├── GameDayStorage.kt             # Android Keystore AES-GCM credential vault & self-healing cache
 │       │   │   │   ├── LenientJson.kt                # Polymorphic OneOrMany & lenient MFL wire decoders
@@ -41,7 +42,8 @@ MFL-GameDay-Android-app/
 │       │   │   └── ui/
 │       │   │       ├── GameDayAppShell.kt            # Responsive NavBar / NavRail / 3-Pane Command Center shell
 │       │   │       ├── components/
-│       │   │       │   ├── BroadcastComponents.kt    # 52dp unobstructed headshots, 48dp team shields, celebration banner
+│       │   │       │   ├── BroadcastComponents.kt    # Decoupled 3D clay avatars, pulsing Red Zone rings & celebration banner
+│       │   │       │   ├── ClayMascotResources.kt    # R8-safe 32 clay mascot & 6 clay base-layer drawable registry
 │       │   │       │   └── QuickTourDialog.kt        # 4-step interactive first-open wizard & anytime ? help guide
 │       │   │       ├── screens/
 │       │   │       │   ├── FantasyMatchupsScreen.kt  # Multi-league split scoreboard, Best Ball & starter breakdowns
@@ -56,6 +58,7 @@ MFL-GameDay-Android-app/
 │       │   └── res/                                  # Adaptive vector football/soundwave icon, strings, XML rules
 │       ├── playStore/                                # Google Play flavor overrides (AndroidManifest.xml, network_security_config.xml)
 │       ├── test/kotlin/com/mflgameday/live/
+│       │   ├── data/ClayPackAndPositionsTest.kt          # 25-position MFL taxonomy & MockWebServer ETag delta manifest tests
 │       │   ├── data/MflAndEspnPipelineIntegrationTest.kt # MockWebServer MFL + ESPN + HTML breakdown pipeline tests
 │       │   ├── diagnostics/DiagnosticsAndLogoTest.kt     # Secret redaction & 32-team NFL logo / headshot tests
 │       │   ├── engine/EventDifferAndSpeechTest.kt        # Pure unit tests for EventDiffer, Speech, Best Ball & Conflicts
@@ -72,7 +75,8 @@ MFL-GameDay-Android-app/
 │   └── libs.versions.toml               # Version catalog
 ├── scripts/
 │   ├── verify.cmd                       # Single local/CI verification entrypoint
-│   └── build-play-store-assets.mjs      # Repeatable 24-bit RGB Play Store graphic & screenshot compositor
+│   ├── build-play-store-assets.mjs      # Repeatable 24-bit RGB Play Store graphic & screenshot compositor
+│   └── sync-claymation-pack.mjs         # Self-healing MFL starter discovery + 4x4 Gemini clay head batch generator
 ├── AGENTS.md                            # Engineering, dual-flavor, signing & release lockstep guide
 └── README.md
 ```

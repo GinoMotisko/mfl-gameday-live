@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.SportsFootball
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -60,7 +61,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.mflgameday.live.model.FantasyMatchup
 import com.mflgameday.live.model.FantasyPlayer
 import com.mflgameday.live.model.FranchiseMatchupSide
@@ -74,6 +74,8 @@ import com.mflgameday.live.model.PlayerLiveScore
 import com.mflgameday.live.service.GameDayCoordinator
 import com.mflgameday.live.service.GameDayUiState
 import com.mflgameday.live.ui.components.AnimatedScoreText
+import com.mflgameday.live.ui.components.FranchiseCrestBadge
+import com.mflgameday.live.ui.components.PlayerAvatarRingStatus
 import com.mflgameday.live.ui.components.PlayerHeadshotAvatar
 import com.mflgameday.live.ui.components.StadiumTurfCanvasBackdrop
 import com.mflgameday.live.ui.theme.LocalGameDayColors
@@ -372,16 +374,12 @@ private fun MatchupSummaryCard(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(7.dp)
         ) {
-          if (!com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD && !side.logoUrl.isNullOrBlank()) {
-            AsyncImage(
-              model = side.logoUrl,
-              contentDescription = null,
-              modifier = Modifier
-                .size(26.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .border(0.75.dp, ext.cardBorder, RoundedCornerShape(6.dp))
-            )
-          }
+          FranchiseCrestBadge(
+            logoUrl = side.logoUrl,
+            franchiseName = side.franchiseName,
+            isMine = isMine,
+            size = 24.dp
+          )
           Text(
             text = if (isMine) "${side.franchiseName} (YOU)" else side.franchiseName,
             fontWeight = if (isMine) FontWeight.ExtraBold else FontWeight.Medium,
@@ -701,14 +699,12 @@ private fun HeroTeamSide(
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-      if (!alignEnd && !com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD && !side.logoUrl.isNullOrBlank()) {
-        AsyncImage(
-          model = side.logoUrl,
-          contentDescription = null,
-          modifier = Modifier
-            .size(46.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .border(1.dp, ext.cardBorder, RoundedCornerShape(10.dp))
+      if (!alignEnd) {
+        FranchiseCrestBadge(
+          logoUrl = side.logoUrl,
+          franchiseName = side.franchiseName,
+          isMine = isMine,
+          size = 40.dp
         )
       }
       Text(
@@ -717,16 +713,15 @@ private fun HeroTeamSide(
         fontWeight = FontWeight.Bold,
         color = if (isMine) ext.mineBadge else MaterialTheme.colorScheme.onSurface,
         maxLines = 1,
-        overflow = TextOverflow.Ellipsis
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.weight(1f, fill = false)
       )
-      if (alignEnd && !com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD && !side.logoUrl.isNullOrBlank()) {
-        AsyncImage(
-          model = side.logoUrl,
-          contentDescription = null,
-          modifier = Modifier
-            .size(46.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .border(1.dp, ext.cardBorder, RoundedCornerShape(10.dp))
+      if (alignEnd) {
+        FranchiseCrestBadge(
+          logoUrl = side.logoUrl,
+          franchiseName = side.franchiseName,
+          isMine = isMine,
+          size = 40.dp
         )
       }
     }
@@ -852,7 +847,8 @@ private fun TeamLineupColumn(
           game = playersDb[pScore.playerId]?.let { gamesByTeam[it.team.code] },
           fmt = fmt,
           settings = settings,
-          isBestBall = config.isBestBall
+          isBestBall = config.isBestBall,
+          isMyTeam = isMyTeam
         )
       }
 
@@ -894,7 +890,8 @@ private fun TeamLineupColumn(
                 game = playersDb[bScore.playerId]?.let { gamesByTeam[it.team.code] },
                 fmt = fmt,
                 settings = settings,
-                isBestBall = config.isBestBall
+                isBestBall = config.isBestBall,
+                isMyTeam = isMyTeam
               )
             }
           }
@@ -911,7 +908,8 @@ private fun PlayerScoreRow(
   game: NflGameState?,
   fmt: String,
   settings: GameDaySettings,
-  isBestBall: Boolean
+  isBestBall: Boolean,
+  isMyTeam: Boolean = false
 ) {
   val ext = LocalGameDayColors.current
   val hasHighlight = playerScore.scoreDeltaRecent > 0.01
@@ -921,8 +919,19 @@ private fun PlayerScoreRow(
     label = "player_flash"
   )
 
-  val hasBall = player != null && game != null && game.phase == GamePhase.LIVE && game.possessionTeam == player.team
-  val inRz = hasBall && game.inRedZone
+  val isDefense = player?.isDefensiveSide == true
+  val inRz = player != null && game != null && game.phase == GamePhase.LIVE && !isDefense && game.possessionTeam == player.team && game.inRedZone
+  val hasBall = player != null && game != null && game.phase == GamePhase.LIVE && !isDefense && game.possessionTeam == player.team
+  val isDefendingField = player != null && game != null && game.phase == GamePhase.LIVE && isDefense && game.possessionTeam != null && game.possessionTeam != player.team
+  val inGoalLineStand = isDefendingField && game != null && game.inRedZone
+
+  val ringStatus = when {
+    inRz -> PlayerAvatarRingStatus.IN_RED_ZONE
+    inGoalLineStand -> PlayerAvatarRingStatus.DEFENDING_RED_ZONE
+    hasBall -> PlayerAvatarRingStatus.HAS_POSSESSION
+    isMyTeam && playerScore.isStarter && ((game != null && game.phase == GamePhase.LIVE) || playerScore.isPlayingNow) -> PlayerAvatarRingStatus.MY_STARTER_LIVE
+    else -> PlayerAvatarRingStatus.IDLE
+  }
 
   Row(
     modifier = Modifier
@@ -933,8 +942,8 @@ private fun PlayerScoreRow(
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(9.dp)
   ) {
-    // Unobstructed 52dp NFL Player Headshot / Team Defense Logo with centered-below position pill
-    PlayerHeadshotAvatar(player = player, size = 52.dp)
+    // 52dp 3D Claymation Player / Defense / Coach / IDP Avatar + Pulsing Red Zone Ring
+    PlayerHeadshotAvatar(player = player, size = 52.dp, ringStatus = ringStatus)
 
     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
       Row(
@@ -953,6 +962,13 @@ private fun PlayerScoreRow(
             imageVector = Icons.Default.SportsFootball,
             contentDescription = if (inRz) "In Red Zone" else "Has Possession",
             tint = if (inRz) ext.redZoneAlert else ext.touchdownGold,
+            modifier = Modifier.size(13.dp)
+          )
+        } else if (isDefendingField) {
+          Icon(
+            imageVector = Icons.Default.Shield,
+            contentDescription = if (inGoalLineStand) "Goal-Line Stand" else "Defense On Field",
+            tint = if (inGoalLineStand) ext.touchdownGold else ext.turfAccent,
             modifier = Modifier.size(13.dp)
           )
         }
