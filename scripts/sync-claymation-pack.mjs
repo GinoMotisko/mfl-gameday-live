@@ -316,7 +316,9 @@ async function main() {
 
       manifest.byMflId[item.id] = assetKey;
       if (item.espnId) manifest.byEspnId[item.espnId] = assetKey;
-      if (!manifest.bySlug[item.slug]) manifest.bySlug[item.slug] = assetKey;
+      if (!manifest.bySlug[item.slug] || (prevKey && manifest.bySlug[item.slug] === prevKey)) {
+        manifest.bySlug[item.slug] = assetKey;
+      }
       generatedCount++;
     }
 
