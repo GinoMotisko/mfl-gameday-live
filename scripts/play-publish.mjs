@@ -283,9 +283,13 @@ async function playApiFetch(accessToken, url, { method = 'GET', body = undefined
 /**
  * Runs an `androidpublisher v3` AppEdit transaction safely:
  * - Always deletes temporary edits on read-only / dry-run / error paths!
- * - Calls `:validate` before `:commit` on live mutating paths!
+ * - Calls `:validate` on mutating dry-runs (`validate: true, commit: false`) AND before `:commit`!
  */
-export async function withPlayAppEdit(accessToken, { commit = false, changesNotSentForReview = false, fetchImpl = fetch }, fn) {
+export async function withPlayAppEdit(
+  accessToken,
+  { commit = false, validate = commit, changesNotSentForReview = false, fetchImpl = fetch },
+  fn
+) {
   const edit = await playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits`, {
     method: 'POST',
     body: {},
@@ -295,11 +299,13 @@ export async function withPlayAppEdit(accessToken, { commit = false, changesNotS
   let committed = false;
   try {
     const result = await fn(editId);
-    if (commit) {
+    if (validate || commit) {
       await playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}:validate`, {
         method: 'POST',
         fetchImpl
       });
+    }
+    if (commit) {
       const qs = changesNotSentForReview ? '?changesNotSentForReview=true' : '';
       await playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}:commit${qs}`, {
         method: 'POST',
@@ -397,7 +403,7 @@ async function cmdUploadInternal(flags) {
   const { accessToken } = await mintGooglePlayAccessToken();
   const aabBytes = fs.readFileSync(aabPath);
 
-  const outcome = await withPlayAppEdit(accessToken, { commit: !isDryRun }, async (editId) => {
+  const outcome = await withPlayAppEdit(accessToken, { validate: true, commit: !isDryRun }, async (editId) => {
     const bundle = await playApiFetch(
       accessToken,
       `${ANDROID_PUBLISHER_UPLOAD}/edits/${editId}/bundles?uploadType=media`,
@@ -442,7 +448,7 @@ async function cmdPromote(flags) {
   });
 
   const { accessToken } = await mintGooglePlayAccessToken();
-  const outcome = await withPlayAppEdit(accessToken, { commit: !isDryRun }, async (editId) => {
+  const outcome = await withPlayAppEdit(accessToken, { validate: true, commit: !isDryRun }, async (editId) => {
     const [src, dst] = await Promise.all([
       playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/${fromTrack}`),
       rollout < 1.0
@@ -496,7 +502,7 @@ async function cmdHaltRelease(flags) {
   });
 
   const { accessToken } = await mintGooglePlayAccessToken();
-  const outcome = await withPlayAppEdit(accessToken, { commit: !isDryRun }, async (editId) => {
+  const outcome = await withPlayAppEdit(accessToken, { validate: true, commit: !isDryRun }, async (editId) => {
     const existingTrack = await playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/${track}`);
     let matched = false;
     const updatedReleases = (existingTrack.releases || []).map((r) => {
@@ -523,6 +529,75 @@ async function cmdHaltRelease(flags) {
   console.log(JSON.stringify(outcome, null, 2));
 }
 
+function listPngsInSubdirOrRoot(rootDir, subdirName, rootFallbackRegex) {
+  const subPath = path.join(rootDir, subdirName);
+  if (fs.existsSync(subPath) && fs.statSync(subPath).isDirectory()) {
+    return fs
+      .readdirSync(subPath)
+      .filter((f) => f.toLowerCase().endsWith('.png'))
+      .sort()
+      .map((f) => path.join(subdirName, f));
+  }
+  if (fs.existsSync(rootDir)) {
+    return fs
+      .readdirSync(rootDir)
+      .filter((f) => rootFallbackRegex.test(f))
+      .sort();
+  }
+  return [];
+}
+
+/**
+ * Discovers and validates the generated `build-play-store-assets.mjs` store kit layout:
+ * - `icon-512x512.png`, `feature-graphic-1024x500.png`
+ * - `screenshots-phone/*.png`, `screenshots-tablet-7in/*.png`, `screenshots-tablet-10in/*.png`
+ * - Plus pre-flight 24-bit RGB validation of `screenshots-foldable/*.png` (note Play API v3's
+ *   `AppImageType` enum does not yet expose a dedicated foldable enum value).
+ */
+export function discoverStoreGraphics(dir) {
+  const slotPatterns = [
+    { imageType: 'icon', relFiles: ['icon-512x512.png'] },
+    { imageType: 'featureGraphic', relFiles: ['feature-graphic-1024x500.png'] },
+    {
+      imageType: 'phoneScreenshots',
+      relFiles: listPngsInSubdirOrRoot(dir, 'screenshots-phone', /^(?:\d+-)?phone-.*\.png$/i)
+    },
+    {
+      imageType: 'sevenInchScreenshots',
+      relFiles: listPngsInSubdirOrRoot(dir, 'screenshots-tablet-7in', /^(?:\d+-)?tab(?:let)?7-.*\.png$/i)
+    },
+    {
+      imageType: 'tenInchScreenshots',
+      relFiles: listPngsInSubdirOrRoot(dir, 'screenshots-tablet-10in', /^(?:\d+-)?tab(?:let)?10-.*\.png$/i)
+    }
+  ];
+
+  const verifiedUploads = [];
+  for (const slot of slotPatterns) {
+    for (const relFile of slot.relFiles) {
+      const fullPath = path.join(dir, relFile);
+      if (fs.existsSync(fullPath)) {
+        const buf = fs.readFileSync(fullPath);
+        const dims = verifyPng24BitRGBOrIcon(buf, relFile, slot.imageType);
+        verifiedUploads.push({ imageType: slot.imageType, file: relFile, fullPath, buf, dims });
+      }
+    }
+  }
+
+  // Also pre-flight validate any generated foldable screenshots for 24-bit RGB compliance
+  const foldableRelFiles = listPngsInSubdirOrRoot(dir, 'screenshots-foldable', /^(?:\d+-)?fold(?:able)?-.*\.png$/i);
+  let verifiedFoldablesCount = 0;
+  for (const relFile of foldableRelFiles) {
+    const fullPath = path.join(dir, relFile);
+    if (fs.existsSync(fullPath)) {
+      verifyPng24BitRgbBuffer(fs.readFileSync(fullPath), relFile);
+      verifiedFoldablesCount++;
+    }
+  }
+
+  return { verifiedUploads, verifiedFoldablesCount };
+}
+
 async function cmdSyncGraphics(flags) {
   const dir = path.resolve(
     flags.dir || 'C:/Users/motis/OneDrive/Motisko Ventures LLC/Google-Play-Console-Kit/2-App-Bundle-And-Store-Graphics'
@@ -530,45 +605,13 @@ async function cmdSyncGraphics(flags) {
   const lang = String(flags.lang || 'en-US');
   const isDryRun = Boolean(flags['dry-run']);
 
-  // Note: Play API v3 imageType slots: icon, featureGraphic, phoneScreenshots, sevenInchScreenshots, tenInchScreenshots
-  const slotPatterns = [
-    { imageType: 'icon', files: ['icon-512x512.png'] },
-    { imageType: 'featureGraphic', files: ['feature-graphic-1024x500.png'] },
-    {
-      imageType: 'phoneScreenshots',
-      files: fs.existsSync(dir)
-        ? fs.readdirSync(dir).filter((f) => /^phone-\d+.*\.png$/i.test(f)).sort()
-        : []
-    },
-    {
-      imageType: 'sevenInchScreenshots',
-      files: fs.existsSync(dir)
-        ? fs.readdirSync(dir).filter((f) => /^tablet7-\d+.*\.png$/i.test(f)).sort()
-        : []
-    },
-    {
-      imageType: 'tenInchScreenshots',
-      files: fs.existsSync(dir)
-        ? fs.readdirSync(dir).filter((f) => /^tablet10-\d+.*\.png$/i.test(f)).sort()
-        : []
-    }
-  ];
-
-  const verifiedUploads = [];
-  for (const slot of slotPatterns) {
-    for (const file of slot.files) {
-      const fullPath = path.join(dir, file);
-      if (fs.existsSync(fullPath)) {
-        const buf = fs.readFileSync(fullPath);
-        const dims = verifyPng24BitRGBOrIcon(buf, file, slot.imageType);
-        verifiedUploads.push({ imageType: slot.imageType, file, fullPath, buf, dims });
-      }
-    }
-  }
+  const { verifiedUploads, verifiedFoldablesCount } = discoverStoreGraphics(dir);
   if (verifiedUploads.length === 0) {
     throw new Error(`No matching graphics found in ${dir}`);
   }
-  console.log(`[preflight] Verified ${verifiedUploads.length} graphics in ${dir}`);
+  console.log(
+    `[preflight] Verified ${verifiedUploads.length} API-syncable graphics (+ ${verifiedFoldablesCount} 24-bit RGB foldable screenshots) in ${dir}`
+  );
 
   await enforceReviewQueueSafetyGate({
     isDryRun,
@@ -576,7 +619,7 @@ async function cmdSyncGraphics(flags) {
   });
 
   const { accessToken } = await mintGooglePlayAccessToken();
-  const outcome = await withPlayAppEdit(accessToken, { commit: !isDryRun }, async (editId) => {
+  const outcome = await withPlayAppEdit(accessToken, { validate: true, commit: !isDryRun }, async (editId) => {
     const byType = new Map();
     for (const item of verifiedUploads) {
       if (!byType.has(item.imageType)) byType.set(item.imageType, []);
@@ -597,7 +640,11 @@ async function cmdSyncGraphics(flags) {
         uploadedCounts[imageType]++;
       }
     }
-    return { mode: isDryRun ? 'DRY_RUN_VALIDATED_AND_DISCARDED' : 'COMMITTED_GRAPHICS', uploadedCounts };
+    return {
+      mode: isDryRun ? 'DRY_RUN_VALIDATED_AND_DISCARDED' : 'COMMITTED_GRAPHICS',
+      uploadedCounts,
+      verifiedFoldablesUiOnlyCount: verifiedFoldablesCount
+    };
   });
 
   console.log(JSON.stringify(outcome, null, 2));
@@ -634,7 +681,7 @@ async function cmdSyncListing(flags) {
   });
 
   const { accessToken } = await mintGooglePlayAccessToken();
-  const outcome = await withPlayAppEdit(accessToken, { commit: !isDryRun }, async (editId) => {
+  const outcome = await withPlayAppEdit(accessToken, { validate: true, commit: !isDryRun }, async (editId) => {
     const existing = await playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/listings/${lang}`);
     const updated = {
       language: lang,
