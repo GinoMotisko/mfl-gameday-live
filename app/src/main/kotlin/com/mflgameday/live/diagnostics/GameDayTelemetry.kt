@@ -4,6 +4,10 @@ import android.content.Context
 import android.os.Build
 import com.mflgameday.live.BuildConfig
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -11,6 +15,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -19,7 +25,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.util.concurrent.TimeUnit
 
 @Serializable
 data class TelemetrySnapshot(
@@ -62,14 +67,18 @@ data class TelemetryUploadPayload(
 
 /**
  * Privacy-first operational telemetry collector & optional anonymous health reporter.
- * Never records usernames, MFL cookies, league IDs, franchise names, or personal identifiers.
- * Network reporting is strictly opt-in (`optInAnonymousTelemetry`) or manual one-tap send.
+ * - Awaits initial disk hydration (`initCompleted`) before evaluating auto-heartbeat intervals.
+ * - Serializes persistence through a single `persistMutex` writing latest `_snapshot.value`
+ *   atomically via temp-file replacement so concurrent updates never reorder or truncate JSON.
  */
 object GameDayTelemetry {
   private const val ENDPOINT_URL = "https://www.motisko.com/api/gameday/telemetry"
   private const val MIN_AUTO_BEACON_INTERVAL_MS = 6L * 60L * 60L * 1000L // 6 hours
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+  private val persistMutex = Mutex()
+  private val beaconMutex = Mutex()
+  private var initCompleted = CompletableDeferred<Unit>()
   private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = false }
   private val httpClient = OkHttpClient.Builder()
     .connectTimeout(8, TimeUnit.SECONDS)
@@ -90,25 +99,45 @@ object GameDayTelemetry {
   fun install(context: Context) {
     if (installed) return
     installed = true
+    initCompleted = CompletableDeferred()
     val dir = File(context.applicationContext.filesDir, "diagnostics").apply { mkdirs() }
     val file = File(dir, "telemetry_metrics.json")
     metricsFile = file
 
     scope.launch {
-      val loaded = runCatching {
-        if (file.exists()) json.decodeFromString<TelemetrySnapshot>(file.readText()) else TelemetrySnapshot()
-      }.getOrDefault(TelemetrySnapshot())
+      try {
+        val loaded = runCatching {
+          if (file.exists()) json.decodeFromString<TelemetrySnapshot>(file.readText()) else TelemetrySnapshot()
+        }.getOrDefault(TelemetrySnapshot())
 
-      val updated = loaded.copy(
-        appVersion = BuildConfig.VERSION_NAME,
-        versionCode = BuildConfig.VERSION_CODE,
-        flavor = if (BuildConfig.IS_PLAY_STORE_BUILD) "playStore" else "direct",
-        sdkInt = Build.VERSION.SDK_INT,
-        deviceModel = "${Build.MANUFACTURER} ${Build.MODEL}".take(48),
-        sessionsStarted = loaded.sessionsStarted + 1L
-      )
-      _snapshot.value = updated
-      persist(updated)
+        synchronized(this@GameDayTelemetry) {
+          // Merge any early in-memory increments recorded while disk read was running
+          val early = _snapshot.value
+          _snapshot.value = loaded.copy(
+            appVersion = BuildConfig.VERSION_NAME,
+            versionCode = BuildConfig.VERSION_CODE,
+            flavor = if (BuildConfig.IS_PLAY_STORE_BUILD) "playStore" else "direct",
+            sdkInt = Build.VERSION.SDK_INT,
+            deviceModel = "${Build.MANUFACTURER} ${Build.MODEL}".take(48),
+            sessionsStarted = loaded.sessionsStarted + 1L,
+            crashCount = loaded.crashCount + early.crashCount,
+            espnPollsOk = loaded.espnPollsOk + early.espnPollsOk,
+            espnPollsFailed = loaded.espnPollsFailed + early.espnPollsFailed,
+            espnLastLatencyMs = if (early.espnLastLatencyMs > 0L) early.espnLastLatencyMs else loaded.espnLastLatencyMs,
+            espnAvgLatencyMs = if (early.espnAvgLatencyMs > 0L) early.espnAvgLatencyMs else loaded.espnAvgLatencyMs,
+            mflPollsOk = loaded.mflPollsOk + early.mflPollsOk,
+            mflPollsFailed = loaded.mflPollsFailed + early.mflPollsFailed,
+            mflEtagHits = loaded.mflEtagHits + early.mflEtagHits,
+            ttsAnnouncementsSpoken = loaded.ttsAnnouncementsSpoken + early.ttsAnnouncementsSpoken,
+            foregroundServiceStarts = loaded.foregroundServiceStarts + early.foregroundServiceStarts,
+            swipeCloseStops = loaded.swipeCloseStops + early.swipeCloseStops,
+            networkDropRecoveries = loaded.networkDropRecoveries + early.networkDropRecoveries
+          )
+        }
+        persistLatestOrdered()
+      } finally {
+        initCompleted.complete(Unit)
+      }
     }
   }
 
@@ -146,9 +175,10 @@ object GameDayTelemetry {
   fun recordCrashDetected() = mutate { it.copy(crashCount = it.crashCount + 1L) }
 
   fun resetMetrics() {
-    val fresh = TelemetrySnapshot(sessionsStarted = 1L)
-    _snapshot.value = fresh
-    scope.launch { persist(fresh) }
+    synchronized(this) {
+      _snapshot.value = TelemetrySnapshot(sessionsStarted = 1L)
+    }
+    scope.launch { persistLatestOrdered() }
     _lastBeaconStatus.value = "Telemetry counters reset"
   }
 
@@ -158,17 +188,29 @@ object GameDayTelemetry {
 
   fun maybeSendAutoHeartbeat(operatingMode: String, optInEnabled: Boolean, lastCrash: CrashReportSummary?) {
     if (!optInEnabled) return
-    val now = System.currentTimeMillis()
-    val cur = _snapshot.value
-    if (lastCrash == null && (now - cur.lastHeartbeatEpochMillis) < MIN_AUTO_BEACON_INTERVAL_MS) return
     scope.launch {
-      sendSnapshotSuspend(operatingMode = operatingMode, lastCrash = lastCrash, manual = false)
+      if (installed) {
+        initCompleted.await()
+      }
+      beaconMutex.withLock {
+        val now = System.currentTimeMillis()
+        val cur = _snapshot.value
+        if (lastCrash == null && (now - cur.lastHeartbeatEpochMillis) < MIN_AUTO_BEACON_INTERVAL_MS) {
+          return@withLock
+        }
+        sendSnapshotSuspend(operatingMode = operatingMode, lastCrash = lastCrash, manual = false)
+      }
     }
   }
 
   fun sendManualSnapshotNow(operatingMode: String, lastCrash: CrashReportSummary?) {
     scope.launch {
-      sendSnapshotSuspend(operatingMode = operatingMode, lastCrash = lastCrash, manual = true)
+      if (installed) {
+        initCompleted.await()
+      }
+      beaconMutex.withLock {
+        sendSnapshotSuspend(operatingMode = operatingMode, lastCrash = lastCrash, manual = true)
+      }
     }
   }
 
@@ -194,7 +236,10 @@ object GameDayTelemetry {
     runCatching {
       httpClient.newCall(req).execute().use { resp ->
         if (resp.isSuccessful) {
-          mutate { it.copy(lastHeartbeatEpochMillis = now) }
+          synchronized(this@GameDayTelemetry) {
+            _snapshot.value = _snapshot.value.copy(lastHeartbeatEpochMillis = now)
+          }
+          persistLatestOrdered()
           _lastBeaconStatus.value = "Telemetry snapshot delivered (HTTP ${resp.code})"
           DiagnosticsLogger.info(LogSubsystem.NETWORK, "Anonymous telemetry snapshot delivered")
           true
@@ -210,16 +255,31 @@ object GameDayTelemetry {
   }
 
   private fun mutate(transform: (TelemetrySnapshot) -> TelemetrySnapshot) {
-    val next = synchronized(this) {
-      val updated = transform(_snapshot.value)
-      _snapshot.value = updated
-      updated
+    synchronized(this) {
+      _snapshot.value = transform(_snapshot.value)
     }
-    scope.launch { persist(next) }
+    scope.launch { persistLatestOrdered() }
   }
 
-  private fun persist(snap: TelemetrySnapshot) {
+  private suspend fun persistLatestOrdered() {
     val file = metricsFile ?: return
-    runCatching { file.writeText(json.encodeToString(snap)) }
+    persistMutex.withLock {
+      // Read the latest authoritative state inside the single-writer lock so older snapshots can never overwrite newer ones
+      val latest = synchronized(this@GameDayTelemetry) { _snapshot.value }
+      runCatching {
+        val tmpFile = File(file.parentFile, "${file.name}.tmp")
+        tmpFile.writeText(json.encodeToString(latest))
+        try {
+          Files.move(
+            tmpFile.toPath(),
+            file.toPath(),
+            StandardCopyOption.REPLACE_EXISTING,
+            StandardCopyOption.ATOMIC_MOVE
+          )
+        } catch (_: Exception) {
+          Files.move(tmpFile.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+      }
+    }
   }
 }
