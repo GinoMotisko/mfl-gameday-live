@@ -62,3 +62,9 @@ Whenever publishing a new GitHub Release (`vX.Y.Z` marked `--latest`):
    - `android:allowBackup="false"` and explicit `<exclude>` rules in `backup_rules.xml` & `data_extraction_rules.xml` prevent encrypted MFL cookies, API keys, and logs from ever leaving the device via cloud backup or device transfer.
    - `GameDayTelemetry` tracks strictly non-PII feed latency/poll health locally and only posts to `https://www.motisko.com/api/gameday/telemetry` when the user explicitly opts in (`optInAnonymousTelemetry = true`) or taps *Send Health Snapshot*.
 3. **Living Docs**: Keep `docs/architecture_map.md` and `docs/project_structure.md` updated whenever modules or flows change.
+4. **Bounded Pre-PR Subagent Review & Codex Sync**:
+   - Before cutting a release, run an independent read-only `research` subagent review focused strictly on P0/P1 runtime, security, and Google Play policy defects (max 2 iterations — never loop endlessly on style nitpicks).
+   - After opening a PR, check `gh api repos/GinoMotisko/mfl-gameday-live/pulls/<N>/comments` so automated Codex reviews complete with `has_any_findings: false` before merging.
+5. **CLI & Connectors First (Browser as Last Resort)**:
+   - Always prefer direct CLIs and MCP connectors (`gh`, `vercel`, `railway`, `op` 1Password CLI, `ExchangeOnlineManagement` PowerShell, Google Drive/Docs plugins, local `G:\` Google Drive mount) over web-browser automation unless an interactive human-only UI has no CLI/API.
+

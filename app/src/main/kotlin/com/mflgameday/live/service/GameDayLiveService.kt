@@ -150,6 +150,21 @@ class GameDayLiveService : LifecycleService() {
     super.onStartCommand(intent, flags, startId)
     val coordinator = (application as MflGameDayApp).coordinator
 
+    // Android 12–16 strictly requires calling startForeground() within the FGS timeout window
+    // whenever startForegroundService() was queued — even if immediately stopping!
+    val wasAlreadyForeground = isRunningInForeground
+    val notification = buildNotification(this, coordinator)
+    val fgsType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+    val promoted = runCatching {
+      ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, fgsType)
+    }.isSuccess
+
+    if (!promoted) {
+      isRunningInForeground = false
+      stopSelf()
+      return START_NOT_STICKY
+    }
+
     when (intent?.action) {
       ACTION_TOGGLE_MUTE -> {
         coordinator.updateSettings { it.copy(muted = !it.muted) }
@@ -173,15 +188,9 @@ class GameDayLiveService : LifecycleService() {
       return START_NOT_STICKY
     }
 
-    val wasAlreadyForeground = isRunningInForeground
     isRunningInForeground = true
     if (!wasAlreadyForeground) {
       com.mflgameday.live.diagnostics.GameDayTelemetry.recordServiceStart()
-    }
-    val notification = buildNotification(this, coordinator)
-    val fgsType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-    runCatching {
-      ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, fgsType)
     }
 
     coordinator.ensureEngineStartedFromService()

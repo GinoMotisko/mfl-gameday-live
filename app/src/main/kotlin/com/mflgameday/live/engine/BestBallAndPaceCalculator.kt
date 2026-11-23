@@ -124,8 +124,15 @@ object BestBallAndPaceCalculator {
     val fInfo = franchisesMap[raw.franchiseId]
     val fName = fInfo?.name ?: if (raw.franchiseId == "AVG") "League Average" else "Team ${raw.franchiseId}"
 
+    val hasLeagueProjections = projections.isNotEmpty()
     val mappedPlayers = raw.players.map { p ->
-      val preProj = projections[p.playerId] ?: defaultPositionProjection(playersDb[p.playerId]?.position)
+      // When MFL's league-specific `projectedScores` feed is available, respect 0.0 for Bye/Out/Inactive players
+      // instead of inventing phantom position-average points; only fall back if projections couldn't be fetched at all.
+      val preProj = if (hasLeagueProjections) {
+        projections[p.playerId] ?: 0.0
+      } else {
+        defaultPositionProjection(playersDb[p.playerId]?.position)
+      }
       val remFraction = (p.gameSecondsRemaining.coerceIn(0, 3600) / 3600.0)
       val livePace = p.score + (preProj * remFraction)
       val prevPScore = prevPlayerScores["${raw.franchiseId}_${p.playerId}"]
@@ -172,25 +179,29 @@ object BestBallAndPaceCalculator {
       }
     }
 
-    // Bench insights (Standard: bench outscoring starter; Best Ball: closest live bench chasers)
+    // Bench insights (Standard: bench outscored a finished/4Q starter; never compare against unplayed starters!)
     val insights = ArrayList<BenchInsight>()
     if (!config.isBestBall) {
       for (b in bench) {
         if (b.score <= 0.0) continue
         val bPlayer = playersDb[b.playerId] ?: continue
-        val worstSamePosStarter = starters
-          .filter { playersDb[it.playerId]?.position == bPlayer.position }
-          .minByOrNull { it.score }
+        val worstFinishedOrLateStarter = starters
+          .filter {
+            playersDb[it.playerId]?.position == bPlayer.position &&
+              it.gameSecondsRemaining <= 900
+          }
+          .minByOrNull { max(it.score, it.livePaceProjection) }
           ?: continue
-        val swing = b.score - worstSamePosStarter.score
-        if (swing >= 3.0) {
-          val sPlayer = playersDb[worstSamePosStarter.playerId]
+        val expectedStarterFinish = max(worstFinishedOrLateStarter.score, worstFinishedOrLateStarter.livePaceProjection)
+        val swing = b.score - worstFinishedOrLateStarter.score
+        if (b.score - expectedStarterFinish >= 3.0 && swing >= 3.0) {
+          val sPlayer = playersDb[worstFinishedOrLateStarter.playerId]
           insights.add(
             BenchInsight(
               benchPlayerName = bPlayer.displayName,
               benchScore = b.score,
-              targetStarterName = sPlayer?.displayName ?: worstSamePosStarter.playerId,
-              starterScore = worstSamePosStarter.score,
+              targetStarterName = sPlayer?.displayName ?: worstFinishedOrLateStarter.playerId,
+              starterScore = worstFinishedOrLateStarter.score,
               position = bPlayer.position,
               pointSwing = swing
             )

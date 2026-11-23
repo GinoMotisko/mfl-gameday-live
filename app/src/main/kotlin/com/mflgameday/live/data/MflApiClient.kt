@@ -239,7 +239,7 @@ class MflApiClient(
 
   internal fun parseLeagueMetadata(leagueId: String, leagueObj: JsonObject): MflLeagueMetadata {
     val name = leagueObj.str("name") ?: "League $leagueId"
-    val baseUrl = (leagueObj.str("baseURL") ?: apiBaseUrl).trimEnd('/')
+    val baseUrl = upgradeHttpToHttpsIfMfl((leagueObj.str("baseURL") ?: apiBaseUrl).trimEnd('/'))
     val isBestBall = leagueObj.boolFromYesOrOne("bestLineup") ||
       leagueObj.str("loadRosters")?.equals("best_ball", ignoreCase = true) == true
     val precision = leagueObj.intOrNull("precision")?.coerceIn(0, 4) ?: 2
@@ -359,7 +359,7 @@ class MflApiClient(
       type = "projectedScores",
       leagueId = config.leagueId,
       apiKey = apiKey,
-      params = mapOf("W" to week.toString(), "COUNT" to "600")
+      params = mapOf("W" to week.toString(), "COUNT" to "2500")
     )
     val root = getJson(url, mflUserIdCookie = mflUserIdCookie)
     val container = root.obj("projectedScores") ?: return emptyMap()
@@ -381,7 +381,7 @@ class MflApiClient(
     apiKey: String? = null,
     mflUserIdCookie: String? = null
   ): Map<String, List<ScoringBreakdownLine>> {
-    val base = config.baseUrl.trimEnd('/').toHttpUrlOrNull() ?: return emptyMap()
+    val base = upgradeHttpToHttpsIfMfl(config.baseUrl.trimEnd('/')).toHttpUrlOrNull() ?: return emptyMap()
     val urlBuilder = base.newBuilder()
       .addPathSegment(config.year.toString())
       .addPathSegment("live_scoring_summary")
@@ -569,8 +569,8 @@ class MflApiClient(
     apiKey: String? = null,
     params: Map<String, String> = emptyMap()
   ): HttpUrl {
-    val base = host.trimEnd('/').toHttpUrlOrNull()
-      ?: apiBaseUrl.toHttpUrlOrNull()
+    val base = upgradeHttpToHttpsIfMfl(host.trimEnd('/')).toHttpUrlOrNull()
+      ?: upgradeHttpToHttpsIfMfl(apiBaseUrl).toHttpUrlOrNull()
       ?: throw IOException("Invalid MFL host: $host")
     val builder = base.newBuilder()
       .addPathSegment(year.toString())
@@ -653,7 +653,7 @@ class MflApiClient(
   }
 
   private fun upgradeHttpToHttpsIfMfl(url: String): String =
-    if (url.startsWith("http://") && url.contains("myfantasyleague.com")) {
-      "https://" + url.removePrefix("http://")
+    if (url.startsWith("http://", ignoreCase = true) && url.contains("myfantasyleague.com", ignoreCase = true)) {
+      "https://" + url.substring(7)
     } else url
 }

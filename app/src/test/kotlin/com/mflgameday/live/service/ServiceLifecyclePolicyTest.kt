@@ -1,7 +1,14 @@
 package com.mflgameday.live.service
 
 import com.mflgameday.live.data.LenientJson
+import com.mflgameday.live.data.RawMflFranchiseLive
+import com.mflgameday.live.data.RawMflMatchup
+import com.mflgameday.live.data.RawMflPlayerScore
 import com.mflgameday.live.diagnostics.TelemetrySnapshot
+import com.mflgameday.live.engine.BestBallAndPaceCalculator
+import com.mflgameday.live.model.FantasyPlayer
+import com.mflgameday.live.model.LeagueConfig
+import com.mflgameday.live.model.NflTeam
 import com.mflgameday.live.model.GameDaySettings
 import com.mflgameday.live.model.OperatingMode
 import org.junit.Assert.assertEquals
@@ -140,5 +147,72 @@ class ServiceLifecyclePolicyTest {
     val snap = TelemetrySnapshot(espnPollsOk = 18, espnPollsFailed = 2, mflPollsOk = 10, mflPollsFailed = 0)
     assertEquals(30L, snap.totalPolls)
     assertEquals(93, snap.pollSuccessRatePct)
+  }
+
+  @Test
+  fun benchInsights_ignoreUnplayedScheduledStarters_andRespectZeroProjectionWhenFeedPresent() {
+    val cfg = LeagueConfig(
+      leagueId = "10479",
+      leagueName = "Wyoming Valley",
+      year = 2026,
+      franchiseId = "0001",
+      franchiseName = "The Meth Lab All-Stars",
+      baseUrl = "https://www48.myfantasyleague.com",
+      isBestBall = false
+    )
+    val playersDb = mapOf(
+      "qb_daniels" to FantasyPlayer("qb_daniels", "Jayden Daniels", "QB", NflTeam("WAS")),
+      "qb_mayfield" to FantasyPlayer("qb_mayfield", "Baker Mayfield", "QB", NflTeam("TBB")),
+      "qb_inactive" to FantasyPlayer("qb_inactive", "Inactive Backup", "QB", NflTeam("CLE"))
+    )
+    // League projections present: Jayden Daniels projected 22.5, Inactive Backup omitted (0.0)
+    val projections = mapOf("qb_daniels" to 22.5, "qb_mayfield" to 19.0)
+
+    val rawMatchup = RawMflMatchup(
+      franchises = listOf(
+        RawMflFranchiseLive(
+          franchiseId = "0001",
+          score = 0.0,
+          isHome = false,
+          playersCurrentlyPlaying = 0,
+          playersYetToPlay = 1,
+          gameSecondsRemaining = 3600,
+          players = listOf(
+            // Unplayed starter (3600s remaining)
+            RawMflPlayerScore("qb_daniels", score = 0.0, isStarter = true, gameSecondsRemaining = 3600),
+            // Finished bench QB (0s remaining, scored 21.0)
+            RawMflPlayerScore("qb_mayfield", score = 21.0, isStarter = false, gameSecondsRemaining = 0)
+          )
+        ),
+        RawMflFranchiseLive(
+          franchiseId = "0002",
+          score = 0.0,
+          isHome = true,
+          playersCurrentlyPlaying = 0,
+          playersYetToPlay = 1,
+          gameSecondsRemaining = 3600,
+          players = listOf(
+            RawMflPlayerScore("qb_inactive", score = 0.0, isStarter = true, gameSecondsRemaining = 3600)
+          )
+        )
+      )
+    )
+
+    val snap = BestBallAndPaceCalculator.buildLeagueSnapshot(
+      config = cfg,
+      week = 11,
+      franchisesMap = emptyMap(),
+      rawMatchups = listOf(rawMatchup),
+      playersDb = playersDb,
+      projections = projections,
+      breakdowns = emptyMap(),
+      previousSnapshot = null,
+      nowMillis = 1000L
+    )
+
+    val m = snap.matchups.single()
+    assertTrue("Must not flag Bench Outscored Starter when starter hasn't played yet", m.away.benchInsights.isEmpty())
+    assertEquals(22.5, m.away.projectedScore, 0.01)
+    assertEquals("Omitted/inactive player must get 0.0 projection, not 18.5 fallback", 0.0, m.home.projectedScore, 0.01)
   }
 }
