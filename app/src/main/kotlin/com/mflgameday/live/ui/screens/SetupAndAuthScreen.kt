@@ -167,7 +167,13 @@ fun SetupAndAuthScreen(
             ) {
               Icon(Icons.Default.RecordVoiceOver, contentDescription = null, modifier = Modifier.size(18.dp))
               Spacer(Modifier.width(6.dp))
-              Text("Launch NFL Live Only (No Account)")
+              Text(
+                if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) {
+                  "Launch Live Scores Only (No Account)"
+                } else {
+                  "Launch NFL Live Only (No Account)"
+                }
+              )
             }
 
             FilledTonalButton(
@@ -388,10 +394,22 @@ private fun MflSignInCard(
     ) {
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Icon(Icons.Default.AccountCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-        Text("Sign In with MFL Account", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(
+          text = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) {
+            "Connect Existing MFL Session (Local Only)"
+          } else {
+            "Sign In with MFL Account"
+          },
+          style = MaterialTheme.typography.titleMedium,
+          fontWeight = FontWeight.Bold
+        )
       }
       Text(
-        text = "Automatically imports all your MyFantasyLeague leagues, scoring formats, Best Ball rules, and teams.",
+        text = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) {
+          "GameDay Live does not create user accounts. Credentials stay encrypted locally on this device to read your existing MyFantasyLeague.com leagues."
+        } else {
+          "Automatically imports all your MyFantasyLeague leagues, scoring formats, Best Ball rules, and teams."
+        },
         style = MaterialTheme.typography.bodySmall,
         color = ext.subtleText
       )
@@ -524,15 +542,17 @@ private fun ManualLeagueCard(
         color = ext.subtleText
       )
 
-      FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        AssistChip(
-          onClick = { onQuickPreset("22539") },
-          label = { Text("Quick Load #22539 (Best Ball)") }
-        )
-        AssistChip(
-          onClick = { onQuickPreset("10479") },
-          label = { Text("Quick Load #10479 (WVC)") }
-        )
+      if (!com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          AssistChip(
+            onClick = { onQuickPreset("22539") },
+            label = { Text("Quick Load #22539 (Best Ball)") }
+          )
+          AssistChip(
+            onClick = { onQuickPreset("10479") },
+            label = { Text("Quick Load #10479 (WVC)") }
+          )
+        }
       }
 
       Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {

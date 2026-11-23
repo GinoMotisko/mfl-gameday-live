@@ -48,25 +48,31 @@ MFL-GameDay-Android-app/
 │       │   │       │   ├── NflGamesScreen.kt         # Adaptive 1/2/3-col NFL grid, RedZone pulse, Game Center modal
 │       │   │       │   ├── PlayFeedScreen.kt         # Filterable play-by-play log + one-tap speak & simulator
 │       │   │       │   ├── SettingsAndVoicesScreen.kt# Voice auditioner, 5 themes, event ticks, schedule refresh, OS readiness
-│       │   │       │   └── SetupAndAuthScreen.kt     # MFL Login, League ID lookup, NFL-Only mode & Demo Simulator
+│       │   │       │   └── SetupAndAuthScreen.kt     # MFL Login, League ID lookup, Live-Only mode & Demo Simulator
 │       │   │       └── theme/
 │       │   │           ├── Color.kt
 │       │   │           ├── Theme.kt                  # 5 animated broadcast color palettes
 │       │   │           └── Type.kt
 │       │   └── res/                                  # Adaptive vector football/soundwave icon, strings, XML rules
+│       ├── playStore/                                # Google Play flavor overrides (AndroidManifest.xml, network_security_config.xml)
 │       ├── test/kotlin/com/mflgameday/live/
 │       │   ├── data/MflAndEspnPipelineIntegrationTest.kt # MockWebServer MFL + ESPN + HTML breakdown pipeline tests
 │       │   ├── diagnostics/DiagnosticsAndLogoTest.kt     # Secret redaction & 32-team NFL logo / headshot tests
-│       │   └── engine/EventDifferAndSpeechTest.kt        # Pure unit tests for EventDiffer, Speech, Best Ball & Conflicts
+│       │   ├── engine/EventDifferAndSpeechTest.kt        # Pure unit tests for EventDiffer, Speech, Best Ball & Conflicts
+│       │   └── service/ServiceLifecyclePolicyTest.kt     # Home-background vs Recents swipe-close & projection pace tests
 │       └── androidTest/kotlin/com/mflgameday/live/
 │           └── ui/GameDayUiSmokeTest.kt              # Instrumented Compose smoke test
 ├── docs/
 │   ├── architecture_map.md              # Living architecture reference
 │   ├── project_structure.md             # Living folder & command reference
+│   ├── PLAY_STORE_SUBMISSION_PACK.md    # Google Play ASO copy, Data Safety & FGS submission guide
 │   └── plans/
 │       └── 2026-11-22-mfl-gameday-android.md
 ├── gradle/
 │   └── libs.versions.toml               # Version catalog
 ├── scripts/
-│   └── verify.cmd                       # Single local/CI verification entrypoint
+│   ├── verify.cmd                       # Single local/CI verification entrypoint
+│   └── build-play-store-assets.mjs      # Repeatable 24-bit RGB Play Store graphic & screenshot compositor
+├── AGENTS.md                            # Engineering, dual-flavor, signing & release lockstep guide
 └── README.md
+```

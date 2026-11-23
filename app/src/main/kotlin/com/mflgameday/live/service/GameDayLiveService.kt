@@ -72,21 +72,22 @@ class GameDayLiveService : LifecycleService() {
       val myMatchup = activeSnap?.matchups?.firstOrNull { it.involvesMyFranchise }
       val fmt = "%.${activeSnap?.config?.precision ?: 2}f"
 
+      val appBrand = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) "GameDay Live" else "MFL GameDay Live"
       val title = if (myMatchup != null && activeSnap != null) {
         val me = myMatchup.mySide(activeSnap.config.franchiseId)
         val opp = myMatchup.opponentSide(activeSnap.config.franchiseId)
         if (me != null && opp != null) {
           "${activeSnap.config.leagueName}: ${fmt.format(me.score)} – ${fmt.format(opp.score)} vs ${opp.franchiseName}"
         } else {
-          "MFL GameDay Live · Week ${state.currentWeek}"
+          "$appBrand · Week ${state.currentWeek}"
         }
       } else {
-        "MFL GameDay Live · Week ${state.currentWeek}"
+        "$appBrand · Week ${state.currentWeek}"
       }
 
       val lastCall = state.playLog.firstOrNull()?.spokenText
       val body = when {
-        state.settings.muted -> "Announcements Muted · $liveGames live NFL games"
+        state.settings.muted -> "Announcements Muted · $liveGames live games"
         !lastCall.isNullOrBlank() -> lastCall
         else -> "${state.statusMessage} · Scope: ${state.settings.scope.shortLabel}"
       }
@@ -150,6 +151,21 @@ class GameDayLiveService : LifecycleService() {
     super.onStartCommand(intent, flags, startId)
     val coordinator = (application as MflGameDayApp).coordinator
 
+    // Android 12–16 strictly requires calling startForeground() within the FGS timeout window
+    // whenever startForegroundService() was queued — even if immediately stopping!
+    val wasAlreadyForeground = isRunningInForeground
+    val notification = buildNotification(this, coordinator)
+    val fgsType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+    val promoted = runCatching {
+      ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, fgsType)
+    }.isSuccess
+
+    if (!promoted) {
+      isRunningInForeground = false
+      stopSelf()
+      return START_NOT_STICKY
+    }
+
     when (intent?.action) {
       ACTION_TOGGLE_MUTE -> {
         coordinator.updateSettings { it.copy(muted = !it.muted) }
@@ -173,15 +189,9 @@ class GameDayLiveService : LifecycleService() {
       return START_NOT_STICKY
     }
 
-    val wasAlreadyForeground = isRunningInForeground
     isRunningInForeground = true
     if (!wasAlreadyForeground) {
       com.mflgameday.live.diagnostics.GameDayTelemetry.recordServiceStart()
-    }
-    val notification = buildNotification(this, coordinator)
-    val fgsType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-    runCatching {
-      ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, fgsType)
     }
 
     coordinator.ensureEngineStartedFromService()
@@ -215,12 +225,17 @@ class GameDayLiveService : LifecycleService() {
   private fun ensureChannel() {
     val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+      val channelTitle = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) {
+        "GameDay Live Announcer"
+      } else {
+        "MFL GameDay Live Announcer"
+      }
       val channel = NotificationChannel(
         CHANNEL_ID,
-        "MFL GameDay Live Announcer",
+        channelTitle,
         NotificationManager.IMPORTANCE_LOW
       ).apply {
-        description = "Keeps live NFL & fantasy score polling and spoken play-by-play active in the background."
+        description = "Keeps live football & fantasy score polling and spoken play-by-play active in the background."
         setShowBadge(false)
       }
       nm.createNotificationChannel(channel)

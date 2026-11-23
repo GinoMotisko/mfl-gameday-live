@@ -321,6 +321,23 @@ private fun LeagueFormatHeaderCard(config: LeagueConfig, week: Int) {
   }
 }
 
+private fun orderedMatchupSides(
+  matchup: FantasyMatchup,
+  myFranchiseId: String
+): Pair<FranchiseMatchupSide, FranchiseMatchupSide> {
+  return if (matchup.involvesMyFranchise && matchup.home.franchiseId == myFranchiseId) {
+    matchup.home to matchup.away
+  } else {
+    matchup.away to matchup.home
+  }
+}
+
+private fun shortFranchiseTag(name: String): String {
+  val trimmed = name.trim()
+  if (trimmed.length <= 12) return trimmed
+  return trimmed.take(11).trimEnd() + "…"
+}
+
 @Composable
 private fun MatchupSummaryCard(
   matchup: FantasyMatchup,
@@ -331,6 +348,7 @@ private fun MatchupSummaryCard(
 ) {
   val ext = LocalGameDayColors.current
   val fmt = "%.${config.precision}f"
+  val (firstSide, secondSide) = orderedMatchupSides(matchup, config.franchiseId)
   val borderColor = when {
     isSelected -> MaterialTheme.colorScheme.primary
     matchup.involvesMyFranchise -> ext.mineBadge.copy(alpha = 0.55f)
@@ -346,14 +364,15 @@ private fun MatchupSummaryCard(
       .clickable(onClick = onClick)
   ) {
     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-      listOf(matchup.away, matchup.home).forEach { side ->
+      listOf(firstSide, secondSide).forEach { side ->
+        val other = if (side == firstSide) secondSide else firstSide
         val isMine = side.franchiseId == config.franchiseId
-        val isLeading = side.score >= (if (side == matchup.away) matchup.home.score else matchup.away.score)
+        val isLeading = side.score >= other.score
         Row(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(7.dp)
         ) {
-          if (!side.logoUrl.isNullOrBlank()) {
+          if (!com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD && !side.logoUrl.isNullOrBlank()) {
             AsyncImage(
               model = side.logoUrl,
               contentDescription = null,
@@ -364,7 +383,7 @@ private fun MatchupSummaryCard(
             )
           }
           Text(
-            text = side.franchiseName,
+            text = if (isMine) "${side.franchiseName} (YOU)" else side.franchiseName,
             fontWeight = if (isMine) FontWeight.ExtraBold else FontWeight.Medium,
             color = if (isMine) ext.mineBadge else MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
@@ -381,20 +400,41 @@ private fun MatchupSummaryCard(
       }
 
       if (showWinProb) {
-        val awayPct = (matchup.away.winProbability * 100).roundToInt()
-        val homePct = 100 - awayPct
+        val firstPct = (firstSide.winProbability * 100).roundToInt().coerceIn(0, 100)
+        val secondPct = 100 - firstPct
+        val barColor = if (matchup.involvesMyFranchise) ext.mineBadge else MaterialTheme.colorScheme.primary
+        val trackCol = if (matchup.involvesMyFranchise) ext.opponentBadge.copy(alpha = 0.45f) else MaterialTheme.colorScheme.surfaceVariant
         LinearProgressIndicator(
-          progress = { matchup.away.winProbability },
+          progress = { firstSide.winProbability },
           modifier = Modifier
             .fillMaxWidth()
-            .height(4.dp)
+            .height(5.dp)
             .clip(CircleShape),
-          color = ext.mineBadge,
-          trackColor = ext.opponentBadge.copy(alpha = 0.65f)
+          color = barColor,
+          trackColor = trackCol
         )
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-          Text("$awayPct% win", fontSize = 10.sp, color = ext.subtleText)
-          Text("$homePct% win", fontSize = 10.sp, color = ext.subtleText)
+          Text(
+            text = if (matchup.involvesMyFranchise) {
+              "YOU $firstPct% · Est ${fmt.format(firstSide.projectedScore)}"
+            } else {
+              "${shortFranchiseTag(firstSide.franchiseName)} $firstPct%"
+            },
+            fontSize = 10.sp,
+            fontWeight = if (matchup.involvesMyFranchise) FontWeight.Bold else FontWeight.Medium,
+            color = if (matchup.involvesMyFranchise) ext.mineBadge else ext.subtleText,
+            maxLines = 1
+          )
+          Text(
+            text = if (matchup.involvesMyFranchise) {
+              "OPP $secondPct%"
+            } else {
+              "${shortFranchiseTag(secondSide.franchiseName)} $secondPct%"
+            },
+            fontSize = 10.sp,
+            color = ext.subtleText,
+            maxLines = 1
+          )
         }
       }
     }
@@ -410,6 +450,7 @@ private fun CompactMatchupPill(
 ) {
   val ext = LocalGameDayColors.current
   val fmt = "%.${config.precision}f"
+  val (leftSide, rightSide) = orderedMatchupSides(matchup, config.franchiseId)
   Surface(
     color = if (isSelected) ext.cardElevated else ext.cardSurface,
     shape = RoundedCornerShape(12.dp),
@@ -423,7 +464,7 @@ private fun CompactMatchupPill(
       .clickable(onClick = onClick)
   ) {
     Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-      listOf(matchup.away, matchup.home).forEach { side ->
+      listOf(leftSide, rightSide).forEach { side ->
         Row(verticalAlignment = Alignment.CenterVertically) {
           Text(
             text = side.franchiseName,
@@ -456,6 +497,7 @@ private fun MatchupDetailBoard(
   sideBySideColumns: Boolean
 ) {
   val ext = LocalGameDayColors.current
+  val (leftSide, rightSide) = orderedMatchupSides(matchup, snapshot.config.franchiseId)
   var compactTeamTab by rememberSaveable(matchup.id) { mutableIntStateOf(0) }
   val gamesByTeam = remember(nflGames) {
     val map = HashMap<String, NflGameState>()
@@ -475,7 +517,9 @@ private fun MatchupDetailBoard(
   ) {
     // Head-to-Head Scoreboard Header + Live Win Probability & Pace Banner
     MatchupHeroHeader(
-      matchup = matchup,
+      leftSide = leftSide,
+      rightSide = rightSide,
+      involvesMyFranchise = matchup.involvesMyFranchise,
       config = snapshot.config,
       showWinProb = settings.showWinProbabilityAndPace
     )
@@ -488,9 +532,9 @@ private fun MatchupDetailBoard(
       ) {
         TeamLineupColumn(
           modifier = Modifier.weight(1f),
-          side = matchup.away,
-          isLeading = matchup.away.score >= matchup.home.score,
-          isMyTeam = matchup.away.franchiseId == snapshot.config.franchiseId,
+          side = leftSide,
+          isLeading = leftSide.score >= rightSide.score,
+          isMyTeam = leftSide.franchiseId == snapshot.config.franchiseId,
           config = snapshot.config,
           playersDb = playersDb,
           gamesByTeam = gamesByTeam,
@@ -498,9 +542,9 @@ private fun MatchupDetailBoard(
         )
         TeamLineupColumn(
           modifier = Modifier.weight(1f),
-          side = matchup.home,
-          isLeading = matchup.home.score >= matchup.away.score,
-          isMyTeam = matchup.home.franchiseId == snapshot.config.franchiseId,
+          side = rightSide,
+          isLeading = rightSide.score >= leftSide.score,
+          isMyTeam = rightSide.franchiseId == snapshot.config.franchiseId,
           config = snapshot.config,
           playersDb = playersDb,
           gamesByTeam = gamesByTeam,
@@ -508,7 +552,7 @@ private fun MatchupDetailBoard(
         )
       }
     } else {
-      // Phone portrait quick toggle between Away / Home or Side-by-Side
+      // Phone portrait quick toggle between Left / Right
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -516,18 +560,18 @@ private fun MatchupDetailBoard(
         FilterChip(
           selected = compactTeamTab == 0,
           onClick = { compactTeamTab = 0 },
-          label = { Text(matchup.away.franchiseName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+          label = { Text(leftSide.franchiseName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
           modifier = Modifier.weight(1f)
         )
         FilterChip(
           selected = compactTeamTab == 1,
           onClick = { compactTeamTab = 1 },
-          label = { Text(matchup.home.franchiseName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+          label = { Text(rightSide.franchiseName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
           modifier = Modifier.weight(1f)
         )
       }
-      val activeSide = if (compactTeamTab == 0) matchup.away else matchup.home
-      val otherSide = if (compactTeamTab == 0) matchup.home else matchup.away
+      val activeSide = if (compactTeamTab == 0) leftSide else rightSide
+      val otherSide = if (compactTeamTab == 0) rightSide else leftSide
       TeamLineupColumn(
         modifier = Modifier.fillMaxWidth(),
         side = activeSide,
@@ -544,12 +588,15 @@ private fun MatchupDetailBoard(
 
 @Composable
 private fun MatchupHeroHeader(
-  matchup: FantasyMatchup,
+  leftSide: FranchiseMatchupSide,
+  rightSide: FranchiseMatchupSide,
+  involvesMyFranchise: Boolean,
   config: LeagueConfig,
   showWinProb: Boolean
 ) {
   val ext = LocalGameDayColors.current
   val fmt = "%.${config.precision}f"
+  val leftIsMine = leftSide.franchiseId == config.franchiseId
 
   Surface(
     color = ext.cardElevated,
@@ -578,7 +625,7 @@ private fun MatchupHeroHeader(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
       ) {
-        HeroTeamSide(side = matchup.away, fmt = fmt, alignEnd = false, modifier = Modifier.weight(1f))
+        HeroTeamSide(side = leftSide, isMine = leftIsMine, fmt = fmt, alignEnd = false, modifier = Modifier.weight(1f))
         Text(
           text = "VS",
           style = MaterialTheme.typography.labelLarge,
@@ -586,24 +633,32 @@ private fun MatchupHeroHeader(
           color = ext.subtleText,
           modifier = Modifier.padding(horizontal = 10.dp)
         )
-        HeroTeamSide(side = matchup.home, fmt = fmt, alignEnd = true, modifier = Modifier.weight(1f))
+        HeroTeamSide(
+          side = rightSide,
+          isMine = rightSide.franchiseId == config.franchiseId,
+          fmt = fmt,
+          alignEnd = true,
+          modifier = Modifier.weight(1f)
+        )
       }
 
       if (showWinProb) {
-        val awayWin = (matchup.away.winProbability * 100).roundToInt()
-        val homeWin = 100 - awayWin
+        val leftWin = (leftSide.winProbability * 100).roundToInt().coerceIn(0, 100)
+        val rightWin = 100 - leftWin
+        val leftBarColor = if (involvesMyFranchise) ext.mineBadge else MaterialTheme.colorScheme.primary
+        val rightBarColor = if (involvesMyFranchise) ext.opponentBadge.copy(alpha = 0.45f) else MaterialTheme.colorScheme.surfaceVariant
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
           Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(
-              text = "$awayWin% Win · Pace ${fmt.format(matchup.away.projectedScore)}",
+              text = "${if (leftIsMine) "YOU · " else "${shortFranchiseTag(leftSide.franchiseName)} · "}$leftWin% Win · Est ${fmt.format(leftSide.projectedScore)}",
               style = MaterialTheme.typography.labelSmall,
-              color = ext.mineBadge,
-              fontWeight = FontWeight.SemiBold
+              color = if (leftIsMine) ext.mineBadge else MaterialTheme.colorScheme.primary,
+              fontWeight = FontWeight.Bold
             )
             Text(
-              text = "Pace ${fmt.format(matchup.home.projectedScore)} · $homeWin% Win",
+              text = "Est ${fmt.format(rightSide.projectedScore)} · $rightWin% Win · ${if (involvesMyFranchise) "OPP" else shortFranchiseTag(rightSide.franchiseName)}",
               style = MaterialTheme.typography.labelSmall,
-              color = ext.turfAccent,
+              color = ext.subtleText,
               fontWeight = FontWeight.SemiBold
             )
           }
@@ -612,14 +667,14 @@ private fun MatchupHeroHeader(
               .fillMaxWidth()
               .height(7.dp)
               .clip(CircleShape)
-              .background(ext.turfAccent.copy(alpha = 0.40f))
+              .background(rightBarColor)
           ) {
             Box(
               modifier = Modifier
-                .fillMaxWidth(matchup.away.winProbability)
+                .fillMaxWidth(leftSide.winProbability)
                 .fillMaxHeight()
                 .clip(CircleShape)
-                .background(ext.mineBadge)
+                .background(leftBarColor)
             )
           }
         }
@@ -632,6 +687,7 @@ private fun MatchupHeroHeader(
 @Composable
 private fun HeroTeamSide(
   side: FranchiseMatchupSide,
+  isMine: Boolean,
   fmt: String,
   alignEnd: Boolean,
   modifier: Modifier = Modifier
@@ -645,7 +701,7 @@ private fun HeroTeamSide(
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-      if (!alignEnd && !side.logoUrl.isNullOrBlank()) {
+      if (!alignEnd && !com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD && !side.logoUrl.isNullOrBlank()) {
         AsyncImage(
           model = side.logoUrl,
           contentDescription = null,
@@ -656,13 +712,14 @@ private fun HeroTeamSide(
         )
       }
       Text(
-        text = side.franchiseName,
+        text = if (isMine) "${side.franchiseName} (YOU)" else side.franchiseName,
         style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.Bold,
+        color = if (isMine) ext.mineBadge else MaterialTheme.colorScheme.onSurface,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis
       )
-      if (alignEnd && !side.logoUrl.isNullOrBlank()) {
+      if (alignEnd && !com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD && !side.logoUrl.isNullOrBlank()) {
         AsyncImage(
           model = side.logoUrl,
           contentDescription = null,
@@ -770,16 +827,16 @@ private fun TeamLineupColumn(
               .fillMaxWidth()
               .clip(RoundedCornerShape(8.dp))
               .background(ext.opponentBadge.copy(alpha = 0.14f))
-              .padding(horizontal = 8.dp, vertical = 5.dp),
+              .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
           ) {
             Icon(Icons.AutoMirrored.Filled.TrendingUp, contentDescription = null, tint = ext.opponentBadge, modifier = Modifier.size(14.dp))
             Text(
-              text = "Bench Alert: ${insight.benchPlayerName} (${fmt.format(insight.benchScore)}) > ${insight.targetStarterName} (+${fmt.format(insight.pointSwing)})",
+              text = "Bench Outscored Starter: ${insight.benchPlayerName} (${fmt.format(insight.benchScore)}) beat ${insight.targetStarterName} (${fmt.format(insight.starterScore)}) by +${fmt.format(insight.pointSwing)}",
               style = MaterialTheme.typography.labelSmall,
               color = ext.opponentBadge,
-              maxLines = 1,
+              maxLines = 2,
               overflow = TextOverflow.Ellipsis
             )
           }
@@ -991,13 +1048,31 @@ private fun PlayerScoreRow(
         fontFamily = FontFamily.Monospace,
         color = if (hasHighlight) ext.turfAccent else MaterialTheme.colorScheme.onSurface
       )
-      if (hasHighlight) {
-        Text(
-          text = "+${fmt.format(playerScore.scoreDeltaRecent)}",
-          fontSize = 10.sp,
-          fontWeight = FontWeight.ExtraBold,
-          color = ext.turfAccent
-        )
+      when {
+        hasHighlight -> {
+          Text(
+            text = "+${fmt.format(playerScore.scoreDeltaRecent)}",
+            fontSize = 10.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color = ext.turfAccent
+          )
+        }
+        settings.showWinProbabilityAndPace && playerScore.isYetToPlay && playerScore.preGameProjection > 0.05 -> {
+          Text(
+            text = "Proj ${fmt.format(playerScore.preGameProjection)}",
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            color = ext.subtleText
+          )
+        }
+        settings.showWinProbabilityAndPace && playerScore.isPlayingNow && playerScore.livePaceProjection > playerScore.score + 0.05 -> {
+          Text(
+            text = "Est ${fmt.format(playerScore.livePaceProjection)}",
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            color = ext.turfAccent.copy(alpha = 0.85f)
+          )
+        }
       }
     }
   }

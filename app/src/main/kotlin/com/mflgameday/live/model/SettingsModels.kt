@@ -23,7 +23,7 @@ enum class AppThemePreset(
   ),
   STADIUM_PRIMETIME(
     displayName = "Stadium PrimeTime",
-    tagline = "Deep obsidian broadcast navy, emerald turf & RedZone crimson",
+    tagline = "Deep obsidian broadcast navy, emerald turf & Red Zone crimson",
     isDark = true
   ),
   SUNDAY_DAYLIGHT(
@@ -33,16 +33,16 @@ enum class AppThemePreset(
   ),
   CYBER_GRIDIRON_OLED(
     displayName = "Cyber Gridiron OLED",
-    tagline = "True black AMOLED saver for Pixel Fold & Tab S7 with electric neon",
+    tagline = "True black AMOLED saver for foldables & tablets with electric neon",
     isDark = true
   ),
   RETRO_GAMEDAY_GOLD(
     displayName = "Classic GameDay Gold",
-    tagline = "15-year MFL Windows GameDay tribute with warm charcoal & amber LEDs",
+    tagline = "15-year classic desktop GameDay tribute with warm charcoal & amber LEDs",
     isDark = true
   ),
   REDZONE_BLITZ(
-    displayName = "RedZone Octane",
+    displayName = "Red Zone Octane",
     tagline = "High-alert Sunday afternoon garnet, blazing scarlet & spotlight gold",
     isDark = true
   )
@@ -54,12 +54,12 @@ enum class AnnouncementScope(
   val description: String
 ) {
   ALL_NFL(
-    shortLabel = "All NFL",
-    description = "Every live NFL game across the league"
+    shortLabel = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) "All Games" else "All NFL",
+    description = "Every live pro football game across the slate"
   ),
   MY_GAMES(
     shortLabel = "My Games",
-    description = "NFL games involving my or my opponents' players"
+    description = "Games involving my or my opponents' players"
   ),
   MY_PLAYERS(
     shortLabel = "My Players",
@@ -81,7 +81,7 @@ enum class VoicePersona(
     pitch = 0.96f
   ),
   REDZONE_SHOUTY(
-    title = "Excited RedZone (Shouty)",
+    title = "Excited Red Zone (Shouty)",
     subtitle = "Fast-paced, energetic Sunday afternoon excitement",
     speechRate = 1.14f,
     pitch = 1.08f

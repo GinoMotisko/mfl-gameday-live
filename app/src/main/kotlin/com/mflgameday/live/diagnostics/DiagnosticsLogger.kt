@@ -67,7 +67,8 @@ data class CrashReportSummary(
  */
 object DiagnosticsLogger {
   private const val MAX_ENTRIES = 350
-  private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+  @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+  private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
   private val json = Json { ignoreUnknownKeys = true; prettyPrint = false }
   private val entriesDeque = ConcurrentLinkedDeque<DiagnosticEntry>()
 
@@ -105,9 +106,12 @@ object DiagnosticsLogger {
         val logFile = File(dir, "session_ring.jsonl")
         if (logFile.exists()) {
           val lines = logFile.readLines().takeLast(MAX_ENTRIES)
-          lines.mapNotNull { line ->
+          lines.asReversed().mapNotNull { line ->
             runCatching { json.decodeFromString<DiagnosticEntry>(line) }.getOrNull()
-          }.forEach { entriesDeque.addLast(it) }
+          }.forEach { entriesDeque.addFirst(it) }
+          while (entriesDeque.size > MAX_ENTRIES) {
+            entriesDeque.pollFirst()
+          }
           _entries.value = entriesDeque.toList().reversed()
         }
       }
@@ -177,7 +181,7 @@ object DiagnosticsLogger {
       stackTrace = redactSecrets(stackTraceString(throwable).take(4000)),
       deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})"
     )
-    GameDayTelemetry.recordCrashDetected()
+    GameDayTelemetry.recordCrashSynchronously()
     File(dir, "last_crash.json").writeText(json.encodeToString(summary))
   }
 

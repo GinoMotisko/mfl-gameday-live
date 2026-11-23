@@ -129,7 +129,11 @@ fun NflGamesScreen(
       AssistChip(
         onClick = { coordinator.refreshNflScheduleAndPlayers() },
         leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp)) },
-        label = { Text("Refresh NFL Schedule") }
+        label = {
+          Text(
+            if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) "Refresh Schedule" else "Refresh NFL Schedule"
+          )
+        }
       )
 
       AssistChip(
