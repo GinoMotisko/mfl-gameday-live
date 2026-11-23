@@ -17,6 +17,10 @@ local.properties
 /keystore
 *.jks
 *.keystore
+*.dpapi
+*service-account*.json
+.env
+.env.*
 keystore.properties
 .externalNativeBuild
 .cxx
