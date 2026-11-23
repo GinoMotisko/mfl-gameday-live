@@ -348,7 +348,8 @@ object BestBallAndPaceCalculator {
    */
   fun findInvolvedExposures(
     event: GameEvent,
-    exposures: Map<String, PlayerCrossLeagueExposure>
+    exposures: Map<String, PlayerCrossLeagueExposure>,
+    playersDb: Map<String, FantasyPlayer> = emptyMap()
   ): List<PlayerCrossLeagueExposure> {
     if (event.kind == GameEventKind.FANTASY_LEAD_CHANGE) return emptyList()
     val play = event.play ?: return emptyList()
@@ -358,7 +359,7 @@ object BestBallAndPaceCalculator {
     return exposures.values.filter { exp ->
       val p = exp.player
       if (p.team !in gameTeams) return@filter false
-      if (p.isTeamDefense) {
+      if (p.isDefensiveTeamUnit) {
         val evTeam = event.team ?: return@filter false
         if (evTeam.team != p.team) return@filter false
         when (event.kind) {
@@ -368,6 +369,57 @@ object BestBallAndPaceCalculator {
           GameEventKind.SAFETY,
           GameEventKind.FOURTH_DOWN_STOP -> true
           GameEventKind.TOUCHDOWN -> play.offenseTeamId != null && play.offenseTeamId != evTeam.espnId
+          else -> false
+        }
+      } else if (p.isOffensiveTeamUnit) {
+        val evTeam = event.team ?: return@filter false
+        if (evTeam.team != p.team) return@filter false
+        val isTeamOffensePlay = play.offenseTeamId == null || play.offenseTeamId == evTeam.espnId
+        val posCode = p.position.trim().uppercase()
+        when (posCode) {
+          "TMPN" -> false
+          "TMPK" -> isTeamOffensePlay && (
+            event.kind == GameEventKind.FIELD_GOAL || (
+              event.kind == GameEventKind.TRY_FAILED &&
+                !combinedText.contains("two-point", ignoreCase = true) &&
+                !combinedText.contains("2-point", ignoreCase = true)
+              )
+            )
+          "OFF" -> isTeamOffensePlay && (
+            event.kind == GameEventKind.TOUCHDOWN ||
+              event.kind == GameEventKind.TWO_POINT_GOOD ||
+              event.kind == GameEventKind.BIG_PLAY ||
+              event.kind == GameEventKind.FIRST_DOWN
+            )
+          "TMQB", "TMRB", "TMWR", "TMTE" -> {
+            val isOffensiveSkillEvent = isTeamOffensePlay && (
+              event.kind == GameEventKind.TOUCHDOWN ||
+                event.kind == GameEventKind.TWO_POINT_GOOD ||
+                event.kind == GameEventKind.BIG_PLAY ||
+                event.kind == GameEventKind.FIRST_DOWN
+              )
+            if (!isOffensiveSkillEvent) {
+              false
+            } else {
+              val targetPos = posCode.removePrefix("TM")
+              val candidates = playersDb.values.filter {
+                it.team == p.team && it.position.equals(targetPos, ignoreCase = true)
+              }
+              if (candidates.isNotEmpty()) {
+                candidates.any { candidate ->
+                  combinedText.contains(candidate.displayName, ignoreCase = true) ||
+                    (candidate.abbreviatedEspnName != null && combinedText.contains(candidate.abbreviatedEspnName!!, ignoreCase = true))
+                }
+              } else {
+                when (targetPos) {
+                  "QB" -> combinedText.contains("pass", ignoreCase = true) ||
+                    combinedText.contains("scramble", ignoreCase = true) ||
+                    combinedText.contains("sneak", ignoreCase = true)
+                  else -> false
+                }
+              }
+            }
+          }
           else -> false
         }
       } else {

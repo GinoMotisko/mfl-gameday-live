@@ -41,6 +41,7 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -61,6 +62,8 @@ import com.mflgameday.live.service.GameDayUiState
 import com.mflgameday.live.ui.components.GameDayStatusBar
 import com.mflgameday.live.ui.components.LiveCelebrationBanner
 import com.mflgameday.live.ui.components.LiveSpeakingRibbon
+import com.mflgameday.live.ui.components.LocalClayHeadsDir
+import com.mflgameday.live.ui.components.LocalClayManifest
 import com.mflgameday.live.ui.components.QuickTourDialog
 import com.mflgameday.live.ui.screens.FantasyMatchupsScreen
 import com.mflgameday.live.ui.screens.NflGamesScreen
@@ -120,12 +123,16 @@ fun GameDayAppShell(
     return
   }
 
-  BoxWithConstraints(
-    modifier = Modifier
-      .fillMaxSize()
-      .background(MaterialTheme.colorScheme.background)
-      .windowInsetsPadding(WindowInsets.safeDrawing)
+  CompositionLocalProvider(
+    LocalClayManifest provides uiState.clayManifest,
+    LocalClayHeadsDir provides coordinator.clayPackManager.headsDir
   ) {
+    BoxWithConstraints(
+      modifier = Modifier
+        .fillMaxSize()
+        .background(MaterialTheme.colorScheme.background)
+        .windowInsetsPadding(WindowInsets.safeDrawing)
+    ) {
     val shellWidth = maxWidth
     val useNavRail = shellWidth >= 600.dp
     val isCompactHeader = shellWidth < 680.dp
@@ -304,6 +311,7 @@ fun GameDayAppShell(
         }
       )
     }
+  }
   }
 }
 

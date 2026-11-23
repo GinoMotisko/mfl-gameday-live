@@ -14,6 +14,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -59,9 +61,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -84,8 +90,8 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 /**
- * Official NFL team logo badge inside a frosted team-color squircle with glowing
- * possession / RedZone border and graceful offline monogram fallback.
+ * 3D Claymation Team Mascot badge inside a frosted team-color squircle with glowing
+ * possession / Red Zone border and graceful offline monogram fallback.
  */
 @Composable
 fun TeamShieldBadge(
@@ -101,9 +107,9 @@ fun TeamShieldBadge(
   val ringColor = when {
     inRedZone && hasPossession -> ext.redZoneAlert
     hasPossession -> ext.touchdownGold
-    else -> accent.copy(alpha = 0.55f)
+    else -> accent.copy(alpha = 0.65f)
   }
-  val resolvedLogo = logoUrlOverride?.takeIf { it.isNotBlank() } ?: team.espnLogoUrl
+  val mascotRes = ClayMascotResources.mascotResFor(team.code)
 
   Box(
     modifier = Modifier
@@ -111,25 +117,54 @@ fun TeamShieldBadge(
       .clip(RoundedCornerShape(12.dp))
       .background(
         Brush.linearGradient(
-          listOf(primary.copy(alpha = 0.30f), primary.copy(alpha = 0.12f))
+          listOf(primary.copy(alpha = 0.34f), primary.copy(alpha = 0.14f))
         )
       )
       .border(
-        width = if (hasPossession) 2.dp else 1.dp,
+        width = if (hasPossession) 2.dp else 1.2.dp,
         color = ringColor,
         shape = RoundedCornerShape(12.dp)
       )
       .padding(2.dp),
     contentAlignment = Alignment.Center
   ) {
-    if (!BuildConfig.IS_PLAY_STORE_BUILD && (team.code in NflTeam.catalog || !logoUrlOverride.isNullOrBlank())) {
+    if (!BuildConfig.IS_PLAY_STORE_BUILD && !logoUrlOverride.isNullOrBlank()) {
       SubcomposeAsyncImage(
-        model = resolvedLogo,
+        model = logoUrlOverride,
         contentDescription = team.fullName,
         contentScale = ContentScale.Fit,
         modifier = Modifier.fillMaxSize(),
-        loading = { TeamCodeMonogram(team.code, size) },
-        error = { TeamCodeMonogram(team.code, size) }
+        loading = {
+          if (mascotRes != null) {
+            Image(
+              painter = painterResource(mascotRes),
+              contentDescription = team.fullName,
+              contentScale = ContentScale.Fit,
+              modifier = Modifier.fillMaxSize()
+            )
+          } else {
+            TeamCodeMonogram(team.code, size)
+          }
+        },
+        error = {
+          if (mascotRes != null) {
+            Image(
+              painter = painterResource(mascotRes),
+              contentDescription = team.fullName,
+              contentScale = ContentScale.Fit,
+              modifier = Modifier.fillMaxSize()
+            )
+          } else {
+            TeamCodeMonogram(team.code, size)
+          }
+        }
+      )
+    } else if (mascotRes != null) {
+      Image(
+        painter = painterResource(mascotRes),
+        contentDescription = team.fullName,
+        contentScale = ContentScale.Fit,
+        modifier = Modifier.fillMaxSize()
       )
     } else {
       TeamCodeMonogram(team.code, size)
@@ -151,73 +186,292 @@ private fun TeamCodeMonogram(code: String, size: Dp) {
   }
 }
 
+enum class PlayerAvatarRingStatus {
+  IDLE,
+  MY_STARTER_LIVE,
+  HAS_POSSESSION,
+  IN_RED_ZONE,
+  DEFENDING_RED_ZONE
+}
+
 /**
- * Circular player headshot (or team logo for Team Defenses) with a compact position badge.
- * Falls back cleanly to a styled position pill when offline or on Play Store IP-safe builds.
+ * MFL Fantasy Franchise Crest badge: renders user-configured HTTPS MFL franchise logo/icon
+ * with a bundled 3D Clay Golden Championship Trophy fallback when unset or unreachable.
+ */
+@Composable
+fun FranchiseCrestBadge(
+  logoUrl: String?,
+  franchiseName: String,
+  isMine: Boolean,
+  size: Dp = 40.dp
+) {
+  val ext = LocalGameDayColors.current
+  val safeHttpsLogo = logoUrl?.trim()?.takeIf { it.startsWith("https://", ignoreCase = true) }
+  val borderColor = if (isMine) ext.mineBadge.copy(alpha = 0.75f) else ext.cardBorder
+
+  Box(
+    modifier = Modifier
+      .size(size)
+      .clip(RoundedCornerShape(10.dp))
+      .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+      .border(1.2.dp, borderColor, RoundedCornerShape(10.dp))
+      .padding(3.dp),
+    contentAlignment = Alignment.Center
+  ) {
+    if (safeHttpsLogo != null) {
+      SubcomposeAsyncImage(
+        model = safeHttpsLogo,
+        contentDescription = franchiseName,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier
+          .fillMaxSize()
+          .clip(RoundedCornerShape(7.dp)),
+        loading = { ClayTrophyFallback() },
+        error = { ClayTrophyFallback() }
+      )
+    } else {
+      ClayTrophyFallback()
+    }
+  }
+}
+
+@Composable
+private fun ClayTrophyFallback() {
+  Image(
+    painter = painterResource(ClayMascotResources.BASE_TROPHY_CREST),
+    contentDescription = null,
+    contentScale = ContentScale.Fit,
+    modifier = Modifier.fillMaxSize()
+  )
+}
+
+/**
+ * Decoupled 3D Claymation Player / Team-Unit / Coach / IDP Avatar:
+ * - Layers cached neck-up 3D Claymation busts (`ClayPackManifest`) onto a live team-colored
+ *   3D polymer-clay shoulder-pad jersey with live MFL `#jerseyNumber` so NFL trades update
+ *   team colors and jersey numbers automatically with zero asset regeneration.
+ * - Covers all 25 MFL position codes (`Def`/`ST`/`TMDL` Armored Fortress Shield, `Coach` Sideline
+ *   Hoodie + Headset, `Off`/`TMQB` Team Mascot in Jersey, `IDP` 6-Bar Bull-Cage Visor Helmet
+ *   fallback, and `QB/RB/WR/TE/PK/PN` Dark-Visor Skill Helmet fallback).
+ * - Pulses a bright Crimson Red Zone ring (`IN_RED_ZONE`) whenever an offensive starter's team
+ *   is driving inside the opponent's 20-yard line!
  */
 @Composable
 fun PlayerHeadshotAvatar(
   player: FantasyPlayer?,
-  size: Dp = 52.dp
+  size: Dp = 52.dp,
+  ringStatus: PlayerAvatarRingStatus = PlayerAvatarRingStatus.IDLE
 ) {
   val ext = LocalGameDayColors.current
+  val clayManifest = LocalClayManifest.current
+  val clayHeadsDir = LocalClayHeadsDir.current
   val posText = player?.position?.uppercase() ?: "FLX"
-  val imageUrl = if (BuildConfig.IS_PLAY_STORE_BUILD) null else player?.avatarImageUrl
+  val clayHeadModel = remember(clayManifest, clayHeadsDir, player?.id, player?.espnId, player?.rawMflName) {
+    clayManifest.resolveHeadModel(player, clayHeadsDir)
+  }
+
   val initials = remember(player?.displayName, posText) {
     val parts = player?.displayName?.trim()?.split("\\s+".toRegex()).orEmpty()
     when {
       parts.size >= 2 -> "${parts.first().firstOrNull() ?: ""}${parts.last().firstOrNull() ?: ""}".uppercase()
       parts.size == 1 && parts[0].length >= 2 -> parts[0].take(2).uppercase()
-      else -> posText
+      else -> posText.take(3)
     }
   }
-  val teamTint = player?.let { Color(it.team.primaryColorHex) } ?: MaterialTheme.colorScheme.primary
+
+  val rawHex = player?.team?.primaryColorHex ?: 0xFF1E293B
+  val accentHex = player?.team?.accentColorHex ?: 0xFF38BDF8
+  val teamPrimary = Color(rawHex)
+  val teamAccent = Color(accentHex)
+  val jerseyTint = remember(rawHex) { ClayMascotResources.clayModulateTint(rawHex) }
+  val helmetTint = remember(rawHex) { ClayMascotResources.clayHelmetTint(rawHex) }
+
+  val isPulsing = ringStatus == PlayerAvatarRingStatus.IN_RED_ZONE ||
+    ringStatus == PlayerAvatarRingStatus.DEFENDING_RED_ZONE
+
+  val pulseProgress = if (isPulsing) {
+    val infinite = rememberInfiniteTransition(label = "avatar_rz_pulse")
+    val p by infinite.animateFloat(
+      initialValue = 0.48f,
+      targetValue = 1.0f,
+      animationSpec = infiniteRepeatable(
+        animation = tween(560, easing = FastOutSlowInEasing),
+        repeatMode = RepeatMode.Reverse
+      ),
+      label = "avatar_rz_alpha"
+    )
+    p
+  } else {
+    1f
+  }
+
+  val baseRingColor = when (ringStatus) {
+    PlayerAvatarRingStatus.IN_RED_ZONE -> ext.redZoneAlert
+    PlayerAvatarRingStatus.DEFENDING_RED_ZONE -> ext.touchdownGold
+    PlayerAvatarRingStatus.HAS_POSSESSION -> ext.touchdownGold
+    PlayerAvatarRingStatus.MY_STARTER_LIVE -> ext.mineBadge
+    PlayerAvatarRingStatus.IDLE -> if (accentHex == 0xFF000000L) teamPrimary.copy(alpha = 0.80f) else teamAccent.copy(alpha = 0.72f)
+  }
+
+  val ringWidth = when (ringStatus) {
+    PlayerAvatarRingStatus.IN_RED_ZONE -> (2.0f + 1.4f * pulseProgress).dp
+    PlayerAvatarRingStatus.DEFENDING_RED_ZONE -> (1.8f + 1.0f * pulseProgress).dp
+    PlayerAvatarRingStatus.HAS_POSSESSION -> 2.2.dp
+    PlayerAvatarRingStatus.MY_STARTER_LIVE -> 1.8.dp
+    PlayerAvatarRingStatus.IDLE -> 1.35.dp
+  }
 
   Column(
     horizontalAlignment = Alignment.CenterHorizontally,
     verticalArrangement = Arrangement.spacedBy(3.dp)
   ) {
-    // Full unobstructed circular headshot / team shield — zero badge overlap on the photo
     Box(
-      modifier = Modifier
-        .size(size)
-        .clip(CircleShape)
-        .background(teamTint.copy(alpha = if (ext.isDark) 0.30f else 0.16f))
-        .border(1.25.dp, teamTint.copy(alpha = 0.65f), CircleShape),
+      modifier = Modifier.size(size + 4.dp),
       contentAlignment = Alignment.Center
     ) {
-      if (!imageUrl.isNullOrBlank() && player != null) {
-        SubcomposeAsyncImage(
-          model = imageUrl,
-          contentDescription = player.displayName,
-          contentScale = if (player.isTeamDefense) ContentScale.Fit else ContentScale.Crop,
+      if (isPulsing) {
+        Box(
           modifier = Modifier
             .fillMaxSize()
-            .padding(if (player.isTeamDefense) 5.dp else 0.dp),
-          loading = {
-            Text(initials, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace)
-          },
-          error = {
-            Text(initials, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace)
+            .alpha(pulseProgress * 0.60f)
+            .clip(CircleShape)
+            .background(
+              Brush.radialGradient(
+                listOf(baseRingColor.copy(alpha = 0.55f), Color.Transparent)
+              )
+            )
+        )
+      }
+
+      Box(
+        modifier = Modifier
+          .size(size)
+          .clip(CircleShape)
+          .background(
+            Brush.verticalGradient(
+              listOf(
+                teamPrimary.copy(alpha = if (ext.isDark) 0.42f else 0.22f),
+                Color(0xFF0B131C).copy(alpha = if (ext.isDark) 0.88f else 0.14f)
+              )
+            )
+          )
+          .border(ringWidth, baseRingColor.copy(alpha = pulseProgress), CircleShape),
+        contentAlignment = Alignment.Center
+      ) {
+        when {
+          // 1. Defensive Team Units (Def, ST, TMDL, TMLB, TMDB): 3D Clay Armored Fortress Shield + Mascot
+          player?.isDefensiveTeamUnit == true -> {
+            val mascotRes = ClayMascotResources.mascotResFor(player.team.code)
+            Image(
+              painter = painterResource(ClayMascotResources.BASE_DEFENSE_SHIELD),
+              contentDescription = player.displayName,
+              contentScale = ContentScale.Fit,
+              modifier = Modifier
+                .fillMaxSize()
+                .padding(3.dp)
+            )
+            if (mascotRes != null) {
+              Image(
+                painter = painterResource(mascotRes),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                  .size(size * 0.44f)
+                  .offset(y = (-2).dp)
+              )
+            }
           }
-        )
-      } else {
-        Text(
-          text = initials,
-          fontSize = 12.sp,
-          fontWeight = FontWeight.ExtraBold,
-          fontFamily = FontFamily.Monospace,
-          color = MaterialTheme.colorScheme.onSurface
-        )
+
+          // 2. Offensive Team Units (Off, TMQB, TMRB, TMWR, TMTE, TMPK, TMPN): Clay Mascot in Team Clay Jersey
+          player?.isOffensiveTeamUnit == true -> {
+            val mascotRes = ClayMascotResources.mascotResFor(player.team.code)
+            val unitLabel = posText.removePrefix("TM").take(3)
+            ClayJerseyTorsoLayer(
+              size = size,
+              jerseyTint = jerseyTint,
+              chestLabel = unitLabel
+            )
+            if (mascotRes != null) {
+              Image(
+                painter = painterResource(mascotRes),
+                contentDescription = player.displayName,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                  .align(Alignment.TopCenter)
+                  .padding(top = 1.dp)
+                  .size(size * 0.62f)
+              )
+            }
+          }
+
+          // 3. Head Coaches (ignores playing-day jersey numbers; renders Coach Head or Headset Silhouette)
+          player?.isHeadCoach == true -> {
+            if (clayHeadModel != null) {
+              ClayJerseyTorsoLayer(
+                size = size,
+                jerseyTint = jerseyTint,
+                chestLabel = null
+              )
+              SubcomposeAsyncImage(
+                model = clayHeadModel,
+                contentDescription = player.displayName,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                  .align(Alignment.TopCenter)
+                  .padding(top = 1.dp)
+                  .size(size * 0.68f),
+                loading = { ClayCoachFallbackBust(helmetTint) },
+                error = { ClayCoachFallbackBust(helmetTint) }
+              )
+            } else {
+              ClayCoachFallbackBust(helmetTint)
+            }
+          }
+
+          // 4. Individual Offensive Skill, Kickers, Punters & IDP Defenders:
+          //    Decoupled Neck-Up 3D Clay Head + Live Team-Colored #Number Clay Jersey
+          else -> {
+            val chestNum = player?.jerseyNumber?.trim()?.takeIf { it.isNotEmpty() } ?: initials
+            val isDefender = player?.isIdp == true
+            ClayJerseyTorsoLayer(
+              size = size,
+              jerseyTint = jerseyTint,
+              chestLabel = chestNum
+            )
+            if (clayHeadModel != null && player != null) {
+              SubcomposeAsyncImage(
+                model = clayHeadModel,
+                contentDescription = player.displayName,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                  .align(Alignment.TopCenter)
+                  .padding(top = 1.dp)
+                  .size(size * 0.67f),
+                loading = {
+                  ClayHelmetFallbackHead(size = size, isIdp = isDefender, helmetTint = helmetTint)
+                },
+                error = {
+                  ClayHelmetFallbackHead(size = size, isIdp = isDefender, helmetTint = helmetTint)
+                }
+              )
+            } else {
+              ClayHelmetFallbackHead(size = size, isIdp = isDefender, helmetTint = helmetTint)
+            }
+          }
+        }
       }
     }
 
-    // Centered position capsule cleanly below the photo so 100% of the player face stays visible
+    // Centered position capsule cleanly below the circle so 100% of the jersey # and face stay visible
     Box(
       modifier = Modifier
         .clip(RoundedCornerShape(5.dp))
         .background(MaterialTheme.colorScheme.surface)
-        .border(0.75.dp, ext.cardBorder, RoundedCornerShape(5.dp))
+        .border(
+          width = 0.75.dp,
+          color = if (ringStatus == PlayerAvatarRingStatus.IN_RED_ZONE) ext.redZoneAlert else ext.cardBorder,
+          shape = RoundedCornerShape(5.dp)
+        )
         .padding(horizontal = 6.dp, vertical = 1.dp),
       contentAlignment = Alignment.Center
     ) {
@@ -226,11 +480,84 @@ fun PlayerHeadshotAvatar(
         fontSize = 9.sp,
         fontWeight = FontWeight.Black,
         fontFamily = FontFamily.Monospace,
-        color = MaterialTheme.colorScheme.primary,
+        color = if (ringStatus == PlayerAvatarRingStatus.IN_RED_ZONE) ext.redZoneAlert else MaterialTheme.colorScheme.primary,
         maxLines = 1
       )
     }
   }
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.ClayJerseyTorsoLayer(
+  size: Dp,
+  jerseyTint: Color,
+  chestLabel: String?
+) {
+  Image(
+    painter = painterResource(ClayMascotResources.BASE_JERSEY_TORSO),
+    contentDescription = null,
+    contentScale = ContentScale.FillBounds,
+    colorFilter = ColorFilter.tint(jerseyTint, BlendMode.Modulate),
+    modifier = Modifier
+      .align(Alignment.BottomCenter)
+      .width(size * 0.92f)
+      .height(size * 0.50f)
+      .offset(y = 3.dp)
+  )
+  if (!chestLabel.isNullOrBlank()) {
+    Text(
+      text = chestLabel,
+      style = TextStyle(
+        color = Color.White,
+        fontSize = if (chestLabel.length >= 3) 8.5.sp else 10.5.sp,
+        fontWeight = FontWeight.Black,
+        fontFamily = FontFamily.SansSerif,
+        shadow = Shadow(
+          color = Color.Black.copy(alpha = 0.90f),
+          offset = Offset(0f, 1.5f),
+          blurRadius = 3f
+        )
+      ),
+      maxLines = 1,
+      softWrap = false,
+      modifier = Modifier
+        .align(Alignment.BottomCenter)
+        .padding(bottom = 2.dp)
+    )
+  }
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.ClayHelmetFallbackHead(
+  size: Dp,
+  isIdp: Boolean,
+  helmetTint: Color
+) {
+  Image(
+    painter = painterResource(
+      if (isIdp) ClayMascotResources.BASE_HELMET_IDP else ClayMascotResources.BASE_HELMET_SKILL
+    ),
+    contentDescription = null,
+    contentScale = ContentScale.Fit,
+    colorFilter = ColorFilter.tint(helmetTint, BlendMode.Modulate),
+    modifier = Modifier
+      .align(Alignment.TopCenter)
+      .padding(top = 1.dp)
+      .size(size * 0.66f)
+  )
+}
+
+@Composable
+private fun ClayCoachFallbackBust(helmetTint: Color) {
+  Image(
+    painter = painterResource(ClayMascotResources.BASE_COACH_BUST),
+    contentDescription = null,
+    contentScale = ContentScale.Fit,
+    colorFilter = ColorFilter.tint(helmetTint, BlendMode.Modulate),
+    modifier = Modifier
+      .fillMaxSize()
+      .padding(top = 3.dp)
+  )
 }
 
 /**

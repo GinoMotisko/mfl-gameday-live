@@ -43,11 +43,56 @@ data class FantasyPlayer(
   val espnId: String? = null,
   val jerseyNumber: String? = null
 ) {
-  val isTeamDefense: Boolean
+  val isDefensiveTeamUnit: Boolean
     get() = position.equals("Def", ignoreCase = true) ||
       position.equals("ST", ignoreCase = true) ||
-      position.equals("Off", ignoreCase = true) ||
-      position.startsWith("TM", ignoreCase = true)
+      position.equals("TMDL", ignoreCase = true) ||
+      position.equals("TMLB", ignoreCase = true) ||
+      position.equals("TMDB", ignoreCase = true)
+
+  val isOffensiveTeamUnit: Boolean
+    get() = position.equals("Off", ignoreCase = true) ||
+      (position.startsWith("TM", ignoreCase = true) && !isDefensiveTeamUnit)
+
+  val isTeamDefense: Boolean
+    get() = isDefensiveTeamUnit
+
+  val isTeamUnit: Boolean
+    get() = isDefensiveTeamUnit || isOffensiveTeamUnit
+
+  val isHeadCoach: Boolean
+    get() = position.equals("Coach", ignoreCase = true)
+
+  val isIdp: Boolean
+    get() {
+      val p = position.trim().uppercase()
+      return p == "DT" || p == "DE" || p == "LB" || p == "CB" || p == "S" || p == "DL" || p == "DB"
+    }
+
+  /**
+   * True for defensive units (`Def`, `ST`, `TMDL`, `TMLB`, `TMDB`) and individual defensive players (`IDP`),
+   * who are on the field when the *opposing* NFL team has offensive possession.
+   */
+  val isDefensiveSide: Boolean
+    get() = isDefensiveTeamUnit || isIdp
+
+  /**
+   * Canonical lowercase `first_last` key (stripping punctuation & generational suffixes)
+   * used as a secondary lookup in `ClayPackManifest.bySlug` across live MFL & simulator IDs.
+   */
+  val claySlug: String
+    get() {
+      val cleaned = displayName
+        .lowercase()
+        .replace("'", "")
+        .replace("’", "")
+        .replace(".", "")
+        .replace("-", " ")
+      val tokens = cleaned
+        .split(Regex("\\s+"))
+        .filter { it.isNotBlank() && it !in setOf("jr", "sr", "ii", "iii", "iv", "v") }
+      return tokens.joinToString("_") { it.replace(Regex("[^a-z0-9]"), "") }.trim('_')
+    }
 
   val displayName: String
     get() {
@@ -68,7 +113,7 @@ data class FantasyPlayer(
    */
   val avatarImageUrl: String?
     get() = when {
-      isTeamDefense && team.code in NflTeam.catalog -> team.espnLogoUrl
+      isTeamUnit && team.code in NflTeam.catalog -> team.espnLogoUrl
       !espnId.isNullOrBlank() -> "https://a.espncdn.com/i/headshots/nfl/players/full/$espnId.png"
       team.code in NflTeam.catalog -> team.espnLogoUrl
       else -> null

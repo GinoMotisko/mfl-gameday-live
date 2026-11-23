@@ -23,6 +23,7 @@ flowchart TD
         MflClient["MflApiClient\n1.1s rate spacing · HTTP 429 60s backoff\nETag conditional GET · LenientJson"]
         EspnClient["EspnApiClient\nSituation & Field Progress · Play Dedupe"]
         BreakdownParser["ScoringBreakdownParser\nHTML entity + category parser"]
+        ClayMgr["ClayPackManager\nETag conditional manifest.json delta sync\nKillSwitch rollback · O(1) MFL/ESPN/Slug lookup"]
         Storage["GameDayStorage\nAndroid Keystore AES-256-GCM Vault\n24h Player Cache + Play Log JSON"]
     end
 
@@ -37,7 +38,7 @@ flowchart TD
         Diag["DiagnosticsLogger + GameDayTelemetry\nChained Crash Catcher · Redacted Ring-Buffer\nFeed Latency & Opt-In Anonymous Health Beacon"]
         Voice["GameDayVoiceEngine + StadiumSoundSynthesizer\nAndroid TextToSpeech · Self-Healing Rebind\n16-bit PCM Broadcast Stingers"]
         FGS["GameDayLiveService\nmediaPlayback Foreground Service"]
-        UI["Jetpack Compose Adaptive Shell\nTab S10+ · All Tablets · Pixel Fold · Phone\nAuto Dark/Light + 5 Broadcast Themes\nOfficial NFL Logos & Player Headshots"]
+        UI["Jetpack Compose Adaptive Shell\nTab S10+ · All Tablets · Pixel Fold · Phone\nAuto Dark/Light + 5 Broadcast Themes\n3D Claymation Mascots, Neck-Up Heads &\nPulsing Red Zone / Defense Rings"]
     end
 
     MFL --> MflClient
@@ -46,6 +47,7 @@ flowchart TD
     MflClient --> Coord
     BreakdownParser --> Coord
     EspnClient --> Coord
+    ClayMgr <--> Coord
     Storage <--> Coord
     Coord --> Differ
     Coord --> Pace
@@ -61,4 +63,5 @@ flowchart TD
 - **Manifest `<queries>` for `TTS_SERVICE`**: Required on Android 11+ package visibility rules so `TextToSpeech` binds to Google Speech Services and Samsung TTS engines reliably.
 - **Best Ball (`bestLineup = Yes`) & Multi-League Conflict Intelligence**: Automatically detects Best Ball leagues from MFL `league` metadata, tracks optimal bubble starters vs live bench chasers, respects per-league decimal `precision`, pins the user's franchise (`YOU`) consistently across single and doubleheader matchups, restricts bench outscore alerts to 4Q/Final starters (`gameSecondsRemaining <= 900`), and flags players started on your team in League A while facing you in League B (`CONFLICT ⚡`).
 - **Bandwidth-Respectful Polling & Automatic Week Rollover (`GameDayCoordinator` + `MflApiClient`)**: Enforces 1.1s minimum request spacing, `ETag`/`If-None-Match` conditional GETs, HTTP 429 60s backoff, score-delta gating on `live_scoring_summary` HTML breakdowns (~80% fewer MFL HTML fetches), and automatic 30-minute `mfl_status.json` season/week rollover detection with week-keyed projection caches (`COUNT=2500`).
-- **Dual Distribution Flavors (`direct` vs `playStore`)**: `direct` (`com.mflgameday.live`) builds the full-featured GitHub Release APK; `playStore` (`com.motiskoventures.gameday`) produces the Google Play `.aab` bundle with IP-safe vector monograms, HTTPS-only `network_security_config.xml`, `AD_ID` & `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` manifest stripping, and `allowBackup="false"` + `data_extraction_rules.xml` vault isolation.
+- **Decoupled 3D Claymation Visual System & Over-the-Air Delta Pack (`ClayPackManager` + `ClayMascotResources` + `BroadcastComponents`)**: Bundles all 32 original 3D polymer-clay team mascots (`~245 KB`) and 6 sculpted 3D clay base/fallback layers (`~42 KB`: `BlendMode.Modulate` team-tinted `#Number` jersey torso, Dark-Visor Skill Helmet, 6-Bar Bull-Cage IDP Helmet, Armored Fortress Defense Shield, Coach Hoodie/Headset, and Gold Trophy Crest) inside the APK for `0ms` offline rendering across all 25 MFL position codes, while lazily fetching and caching `~5.7 KB` neck-up clay busts via an `ETag`-gated delta manifest (`https://www.motisko.com/assets/gameday/clay/manifest.json`) so mid-season NFL trades recolor jerseys automatically with zero asset updates. Includes pulsing Crimson Red Zone rings for offensive starters driving inside the 20 and Goal-Line Stand defense rings when opposing offenses are on the field.
+- **Dual Distribution Flavors (`direct` vs `playStore`)**: `direct` (`com.mflgameday.live`) builds the GitHub Release APK; `playStore` (`com.motiskoventures.gameday`) produces the Google Play `.aab` bundle with HTTPS-only `network_security_config.xml`, `AD_ID` & `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` manifest stripping, and `allowBackup="false"` + `data_extraction_rules.xml` vault isolation.

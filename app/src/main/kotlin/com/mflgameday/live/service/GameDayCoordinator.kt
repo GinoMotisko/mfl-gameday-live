@@ -5,8 +5,11 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import com.mflgameday.live.audio.GameDayVoiceEngine
+import com.mflgameday.live.data.ClayPackManager
+import com.mflgameday.live.data.ClayPackManifest
 import com.mflgameday.live.data.EspnApiClient
 import com.mflgameday.live.data.GameDayStorage
+import com.mflgameday.live.data.ManifestSyncOutcome
 import com.mflgameday.live.data.MflApiClient
 import com.mflgameday.live.data.MflLeagueMetadata
 import com.mflgameday.live.diagnostics.CrashReportSummary
@@ -36,6 +39,7 @@ import com.mflgameday.live.model.PlayLogEntry
 import com.mflgameday.live.model.PlayerCrossLeagueExposure
 import com.mflgameday.live.model.SpokenCategory
 import com.mflgameday.live.model.VoiceOption
+import java.io.File
 import java.time.Year
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -90,7 +94,8 @@ data class GameDayUiState(
   val diagnosticEntries: List<DiagnosticEntry> = emptyList(),
   val lastCrashReport: CrashReportSummary? = null,
   val telemetrySnapshot: TelemetrySnapshot = TelemetrySnapshot(),
-  val telemetryBeaconStatus: String? = null
+  val telemetryBeaconStatus: String? = null,
+  val clayManifest: ClayPackManifest = ClayPackManifest()
 ) {
   val activeLeagueSnapshot: LeagueLiveSnapshot?
     get() {
@@ -115,6 +120,7 @@ class GameDayCoordinator(
   }
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + exceptionHandler)
   private val storage = GameDayStorage(appContext)
+  val clayPackManager = ClayPackManager(File(appContext.filesDir, "gameday_cache"))
   val voiceEngine = GameDayVoiceEngine(appContext)
 
   private val differ = EventDiffer()
@@ -124,6 +130,7 @@ class GameDayCoordinator(
   private val pendingBreakdownRetryByLeague = HashSet<String>()
   private var mflScheduleEtag: String? = null
   private var lastStatusSyncMillis: Long = 0L
+  private var lastClaySyncMillis: Long = 0L
   private var pollLoopJob: Job? = null
   private var sleepJob: Job? = null
   private var bannerDismissJob: Job? = null
@@ -135,12 +142,21 @@ class GameDayCoordinator(
     GameDayUiState(
       settings = storage.loadSettings(),
       leagues = storage.loadLeagues(),
-      isSignedInMfl = !storage.loadMflUserCookie().isNullOrBlank()
+      isSignedInMfl = !storage.loadMflUserCookie().isNullOrBlank(),
+      clayManifest = clayPackManager.manifest.value
     )
   )
   val uiState: StateFlow<GameDayUiState> = _uiState.asStateFlow()
 
   init {
+    scope.launch {
+      clayPackManager.manifest.collect { manifest ->
+        _uiState.update { it.copy(clayManifest = manifest) }
+      }
+    }
+    scope.launch {
+      maybeSyncClayManifest(force = true)
+    }
     scope.launch {
       val savedLog = storage.loadPlayLog()
       if (savedLog.isNotEmpty()) {
@@ -220,6 +236,9 @@ class GameDayCoordinator(
         override fun onAvailable(network: Network) {
           val wasOffline = !_uiState.value.isNetworkAvailable
           _uiState.update { it.copy(isNetworkAvailable = true) }
+          if (wasOffline || _uiState.value.clayManifest.manifestVersion == 0) {
+            scope.launch { maybeSyncClayManifest(force = false) }
+          }
           if (wasOffline) {
             GameDayTelemetry.recordNetworkRecovery()
             DiagnosticsLogger.info(LogSubsystem.NETWORK, "Network restored — triggering immediate score refresh")
@@ -624,7 +643,21 @@ class GameDayCoordinator(
     }
   }
 
+  private suspend fun maybeSyncClayManifest(force: Boolean) {
+    clayPackManager.reloadFromDisk()
+    val now = System.currentTimeMillis()
+    val needsInitialLoad = _uiState.value.clayManifest.manifestVersion == 0
+    if (!force && !needsInitialLoad && (now - lastClaySyncMillis <= 1_800_000L)) {
+      return
+    }
+    val outcome = clayPackManager.syncManifestIfUpdated()
+    if (outcome != ManifestSyncOutcome.FAILED) {
+      lastClaySyncMillis = System.currentTimeMillis()
+    }
+  }
+
   fun onAppForegrounded() {
+    scope.launch { maybeSyncClayManifest(force = false) }
     val state = _uiState.value
     if (
       ServiceLifecyclePolicy.shouldAutoResumeOnAppForeground(
@@ -695,6 +728,7 @@ class GameDayCoordinator(
    */
   fun refreshNflScheduleAndPlayers() {
     scope.launch {
+      launch { maybeSyncClayManifest(force = true) }
       if (_uiState.value.settings.operatingMode == OperatingMode.DEMO_SIMULATOR) {
         val now = System.currentTimeMillis()
         _uiState.update {
@@ -1060,7 +1094,7 @@ class GameDayCoordinator(
     val newEntries = ArrayList<PlayLogEntry>(events.size)
 
     for (event in events) {
-      val involved = BestBallAndPaceCalculator.findInvolvedExposures(event, exposures)
+      val involved = BestBallAndPaceCalculator.findInvolvedExposures(event, exposures, state.playersDb)
       val category = SpokenCategory.forEvent(event.kind)
       val relevant = BestBallAndPaceCalculator.isEventRelevantForScope(
         event = event,
@@ -1141,7 +1175,7 @@ class GameDayCoordinator(
     if (nameExpander == null && playersDb.isNotEmpty()) {
       nameExpander = PlayerNameExpander(playersDb.values)
     }
-    val involved = BestBallAndPaceCalculator.findInvolvedExposures(event, exposures)
+    val involved = BestBallAndPaceCalculator.findInvolvedExposures(event, exposures, playersDb)
     val involvesMine = involved.any { it.role == ExposureRole.MINE || it.role == ExposureRole.CONFLICT }
     val involvesOpp = involved.any { it.role == ExposureRole.OPPONENT || it.role == ExposureRole.CONFLICT }
     val isConflict = involved.any { it.role == ExposureRole.CONFLICT }
