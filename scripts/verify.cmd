@@ -11,5 +11,10 @@ if errorlevel 1 (
   echo [GameDay Live] VERIFY FAILED
   exit /b 1
 )
+node "%~dp0test-play-publish.mjs"
+if errorlevel 1 (
+  echo [GameDay Live] PLAY PUBLISH GATE TESTS FAILED
+  exit /b 1
+)
 echo [GameDay Live] VERIFY PASSED
 exit /b 0

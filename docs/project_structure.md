@@ -74,7 +74,9 @@ MFL-GameDay-Android-app/
 ├── gradle/
 │   └── libs.versions.toml               # Version catalog
 ├── scripts/
-│   ├── verify.cmd                       # Single local/CI verification entrypoint
+│   ├── verify.cmd                       # Single local/CI verification entrypoint (+ Play API gate tests)
+│   ├── play-publish.mjs                 # Zero-dependency Google Play API v3 + Reporting CLI (1Password GameDay vault + DPAPI)
+│   ├── test-play-publish.mjs            # Automated unit tests for 24-bit RGB, AAB SHA-256, review-queue lockout & AppEdit gates
 │   ├── build-play-store-assets.mjs      # Repeatable 24-bit RGB Play Store graphic & screenshot compositor
 │   └── sync-claymation-pack.mjs         # Self-healing MFL starter discovery + 4x4 Gemini clay head batch generator
 ├── AGENTS.md                            # Engineering, dual-flavor, signing & release lockstep guide
