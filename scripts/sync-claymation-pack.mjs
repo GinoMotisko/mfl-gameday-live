@@ -102,9 +102,15 @@ function knockOutDarkBackground(rgba, width, height, tolerance = 26) {
   bgG /= corners.length;
   bgB /= corners.length;
 
-  const distAt = (pIdx) => {
+  const isBgLike = (pIdx, tol) => {
     const o = pIdx * 4;
-    return Math.hypot(rgba[o] - bgR, rgba[o + 1] - bgG, rgba[o + 2] - bgB);
+    const r = rgba[o];
+    const g = rgba[o + 1];
+    const b = rgba[o + 2];
+    const d = Math.hypot(r - bgR, g - bgG, b - bgB);
+    if (d > tol) return false;
+    if (bgB - bgR >= 7 && b - r < 4 && d > 5.5) return false;
+    return true;
   };
 
   const visited = new Uint8Array(width * height);
@@ -114,7 +120,7 @@ function knockOutDarkBackground(rgba, width, height, tolerance = 26) {
 
   const seed = (x, y) => {
     const p = y * width + x;
-    if (!visited[p] && distAt(p) <= tolerance) {
+    if (!visited[p] && isBgLike(p, tolerance)) {
       visited[p] = 1;
       isBg[p] = 1;
       queue[tail++] = p;
@@ -133,7 +139,7 @@ function knockOutDarkBackground(rgba, width, height, tolerance = 26) {
       const np = ny * width + nx;
       if (visited[np]) continue;
       visited[np] = 1;
-      if (distAt(np) <= tolerance) {
+      if (isBgLike(np, tolerance)) {
         isBg[np] = 1;
         queue[tail++] = np;
       }
@@ -215,23 +221,50 @@ async function main() {
   const resolvedYear = Number(statusJson?.mfl_status?.year || (year - 1));
   const liveWeek = Number(statusJson?.mfl_status?.weeks?.LiveScoringWeek || 1);
 
-  const [playersRes, projRes, topAddsRes, topStartersRes] = await Promise.all([
+  const [playersRes, topOwnsRes, adpRes, projRes, topAddsRes, topStartersRes, espnTeamsRes] = await Promise.all([
     fetchJsonSafe(`https://api.myfantasyleague.com/${resolvedYear}/export?TYPE=players&DETAILS=1&JSON=1`),
+    fetchJsonSafe(`https://api.myfantasyleague.com/${resolvedYear}/export?TYPE=topOwns&JSON=1`),
+    fetchJsonSafe(`https://api.myfantasyleague.com/${resolvedYear}/export?TYPE=adp&JSON=1`),
     fetchJsonSafe(`https://api.myfantasyleague.com/${resolvedYear}/export?TYPE=projectedScores&W=${liveWeek}&COUNT=2500&JSON=1`),
     fetchJsonSafe(`https://api.myfantasyleague.com/${resolvedYear}/export?TYPE=topAdds&W=${liveWeek}&JSON=1`),
     fetchJsonSafe(`https://api.myfantasyleague.com/${resolvedYear}/export?TYPE=topStarters&W=${liveWeek}&JSON=1`),
+    fetchJsonSafe('https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams?limit=32'),
   ]);
 
   const allPlayers = asArray(playersRes?.players?.player);
+  const ownPctMap = new Map(asArray(topOwnsRes?.topOwns?.player).map((p) => [p.id, Number(p.percent || 0)]));
+  const adpMap = new Map(asArray(adpRes?.adp?.player).map((p, idx) => [p.id, Number(p.averagePick || idx + 1)]));
   const projMap = new Map(
     asArray(projRes?.projectedScores?.playerScore).map((s) => [s.id, Number(s.score || 0)])
   );
+  const topStarterMap = new Map(asArray(topStartersRes?.topStarters?.player).map((p) => [p.id, Number(p.percent || 50)]));
   const priorityIds = new Set([
-    ...asArray(topStartersRes?.topStarters?.player).map((p) => p.id),
+    ...topStarterMap.keys(),
     ...asArray(topAddsRes?.topAdds?.player).map((p) => p.id),
   ]);
 
-  const SKILL_POS = new Set(['QB', 'RB', 'WR', 'TE', 'PK']);
+  // Load 32-team ESPN depth charts so starters & primary backups rank ahead of deep practice-squad entries
+  const espnDepthRankByEspnId = new Map();
+  await Promise.all(
+    asArray(espnTeamsRes?.sports?.[0]?.leagues?.[0]?.teams).map(async (t) => {
+      const tid = t?.team?.id;
+      if (!tid) return;
+      const dc = await fetchJsonSafe(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${tid}/depthcharts`);
+      for (const group of [...asArray(dc?.depthchart), ...asArray(dc?.items)]) {
+        for (const posObj of Object.values(group?.positions || {})) {
+          asArray(posObj?.athletes).forEach((entry, idx) => {
+            const aid = String(entry?.athlete?.id || entry?.id || '');
+            if (aid) {
+              const prev = espnDepthRankByEspnId.get(aid) ?? 99;
+              if (idx + 1 < prev) espnDepthRankByEspnId.set(aid, idx + 1);
+            }
+          });
+        }
+      }
+    })
+  );
+
+  const SKILL_POS = new Set(['QB', 'RB', 'WR', 'TE', 'PK', 'PN']);
   const IDP_POS = new Set(['DT', 'DE', 'LB', 'CB', 'S']);
 
   const hasLiveProjections = projMap.size > 0;
@@ -243,24 +276,37 @@ async function main() {
       if (manifest.byMflId[p.id]) return false;
       if (p.position === 'Coach') return true;
       const proj = projMap.get(p.id) || 0;
+      const depth = p.espn_id ? (espnDepthRankByEspnId.get(String(p.espn_id)) ?? 99) : 99;
+      const ownPct = ownPctMap.get(p.id) || 0;
       if (SKILL_POS.has(p.position)) {
-        return hasLiveProjections ? (priorityIds.has(p.id) || proj >= 1.0) : Boolean(p.espn_id);
+        return depth <= 3 || ownPct >= 5 || priorityIds.has(p.id) || (hasLiveProjections && proj >= 1.0);
       }
-      if (IDP_POS.has(p.position)) return priorityIds.has(p.id) || proj >= 5.5;
+      if (IDP_POS.has(p.position)) return depth <= 2 || ownPct >= 5 || priorityIds.has(p.id) || proj >= 5.5;
       return false;
     })
-    .map((p) => ({
-      id: p.id,
-      espnId: p.espn_id || null,
-      displayName: toDisplayName(p.name),
-      slug: toSlug(p.name),
-      position: p.position,
-      team: p.team,
-      priorityScore:
-        (priorityIds.has(p.id) ? 200 : 0) +
-        (projMap.get(p.id) || 0) * 10 +
-        (p.position === 'Coach' ? 140 : 0),
-    }))
+    .map((p) => {
+      const depth = p.espn_id ? (espnDepthRankByEspnId.get(String(p.espn_id)) ?? 99) : 99;
+      const depthBonus = depth === 1 ? 650 : depth === 2 ? 320 : depth === 3 ? 140 : 0;
+      const ownPct = ownPctMap.get(p.id) || 0;
+      const startPct = topStarterMap.get(p.id) || 0;
+      const adp = adpMap.get(p.id) || 500;
+      return {
+        id: p.id,
+        espnId: p.espn_id || null,
+        displayName: toDisplayName(p.name),
+        slug: toSlug(p.name),
+        position: p.position,
+        team: p.team,
+        priorityScore:
+          depthBonus +
+          startPct * 8 +
+          ownPct * 6 +
+          Math.max(0, 350 - adp) * 1.5 +
+          (priorityIds.has(p.id) ? 100 : 0) +
+          (projMap.get(p.id) || 0) * 10 +
+          (p.position === 'Coach' ? 500 : 0),
+      };
+    })
     .sort((a, b) => b.priorityScore - a.priorityScore);
 
   console.log(JSON.stringify({
@@ -306,7 +352,7 @@ async function main() {
         .raw()
         .toBuffer({ resolveWithObject: true });
 
-      knockOutDarkBackground(data, info.width, info.height, 26);
+      knockOutDarkBackground(data, info.width, info.height, 12);
 
       await sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
         .trim({ threshold: 5 })

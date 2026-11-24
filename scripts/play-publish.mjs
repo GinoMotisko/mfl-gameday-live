@@ -126,7 +126,7 @@ export function verifyAabBundleIntegrity(aabPath) {
     );
   }
 
-  // 2. Verify R8 obfuscation mapping is bundled inside BUNDLE-METADATA
+  // 2. Verify R8 obfuscation mapping and native debug symbols are bundled inside BUNDLE-METADATA
   const tarEntries = execFileSync('tar', ['-tf', aabPath], {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
@@ -135,9 +135,16 @@ export function verifyAabBundleIntegrity(aabPath) {
   if (!tarEntries.includes('BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map')) {
     throw new Error(`AAB is missing embedded R8 mapping (BUNDLE-METADATA/.../proguard.map): ${aabPath}`);
   }
+  const hasNativeDebugSymbols = tarEntries.includes('BUNDLE-METADATA/com.android.tools.build.debugsymbols/');
 
   const fileSha256 = crypto.createHash('sha256').update(fs.readFileSync(aabPath)).digest('hex');
-  return { sizeBytes: stat.size, certSha256: actualSha, aabSha256: fileSha256, hasEmbeddedProguardMap: true };
+  return {
+    sizeBytes: stat.size,
+    certSha256: actualSha,
+    aabSha256: fileSha256,
+    hasEmbeddedProguardMap: true,
+    hasNativeDebugSymbols
+  };
 }
 
 /**

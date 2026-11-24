@@ -4,29 +4,63 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Broadcast radio / sound waves -->
+
+    <!-- Concentric radar / broadcast rings matching Play Store icon-512x512 -->
     <path
-        android:pathData="M74,34 C81,41 81,67 74,74"
-        android:strokeColor="#FF00E676"
-        android:strokeWidth="3.5"
+        android:fillColor="#00000000"
+        android:pathData="M26.5,48.5a27.5,27.5 0 1,0 55,0a27.5,27.5 0 1,0 -55,0"
+        android:strokeColor="#FF315E51"
+        android:strokeWidth="1.9" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M32.5,48.5a21.5,21.5 0 1,0 43,0a21.5,21.5 0 1,0 -43,0"
+        android:strokeColor="#FF62833C"
+        android:strokeWidth="1.9" />
+
+    <!-- Tilted neon-lime pro football + dark forest stripes & laces -->
+    <group
+        android:pivotX="54"
+        android:pivotY="48"
+        android:rotation="-32">
+        <path
+            android:fillColor="#FFCFF862"
+            android:pathData="M36.5,48 C38.5,35.8 69.5,35.8 71.5,48 C69.5,60.2 38.5,60.2 36.5,48 Z"
+            android:strokeColor="#FF091811"
+            android:strokeLineJoin="round"
+            android:strokeWidth="2.6" />
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M42.6,39.8 Q45.3,48 42.6,56.2 M65.4,39.8 Q62.7,48 65.4,56.2"
+            android:strokeColor="#FF091811"
+            android:strokeLineCap="round"
+            android:strokeWidth="2.4" />
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M48,48 L60,48 M50.8,45.0 L50.8,51.0 M54,44.6 L54,51.4 M57.2,45.0 L57.2,51.0"
+            android:strokeColor="#FF091811"
+            android:strokeLineCap="round"
+            android:strokeWidth="2.2" />
+    </group>
+
+    <!-- Subtle dark halo under equalizer bars so they cleanly break the outer radar ring -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M39,82.5 L39,78.2 M44,82.5 L44,75.5 M49,82.5 L49,72.5 M54,82.5 L54,69.5 M59,82.5 L59,73.2 M64,82.5 L64,76.0 M69,82.5 L69,78.5"
+        android:strokeColor="#FF07140F"
         android:strokeLineCap="round"
-        android:fillColor="#00000000" />
+        android:strokeWidth="4.8" />
+
+    <!-- 7-bar audio equalizer: alternating teal (#7DE3D6) and neon-lime (#CFF862) -->
     <path
-        android:pathData="M81,28 C91,38 91,70 81,80"
-        android:strokeColor="#8800E676"
-        android:strokeWidth="3.0"
+        android:fillColor="#00000000"
+        android:pathData="M39,82.5 L39,78.2 M49,82.5 L49,72.5 M59,82.5 L59,73.2 M69,82.5 L69,78.5"
+        android:strokeColor="#FF7DE3D6"
         android:strokeLineCap="round"
-        android:fillColor="#00000000" />
-    <!-- Pro Football silhouette -->
+        android:strokeWidth="2.9" />
     <path
-        android:fillColor="#FFD97706"
-        android:strokeColor="#FFFFD54F"
-        android:strokeWidth="2.2"
-        android:pathData="M26,66 C24,47 39,32 58,34 C66,35 70,39 71,47 C73,66 58,81 39,79 C31,78 27,74 26,66 Z" />
-    <!-- Football laces -->
-    <path
-        android:pathData="M41,61 L56,46 M44,53 L49,58 M48,49 L53,54 M38,57 L43,62"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="2.6"
-        android:strokeLineCap="round" />
+        android:fillColor="#00000000"
+        android:pathData="M44,82.5 L44,75.5 M54,82.5 L54,69.5 M64,82.5 L64,76.0"
+        android:strokeColor="#FFCFF862"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.9" />
 </vector>
