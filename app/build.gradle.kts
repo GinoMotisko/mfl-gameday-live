@@ -20,6 +20,7 @@ val hasReleaseKeystore =
 android {
   namespace = "com.mflgameday.live"
   compileSdk = 36
+  ndkVersion = "28.2.13676358"
   defaultConfig {
     minSdk = 31
     targetSdk = 36
@@ -61,6 +62,9 @@ android {
     release {
       isMinifyEnabled = true
       isShrinkResources = true
+      ndk {
+        debugSymbolLevel = "FULL"
+      }
       if (hasReleaseKeystore) {
         signingConfig = signingConfigs.getByName("release")
       }

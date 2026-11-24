@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Single-tint silhouette for Android 13-16 Material You themed icons -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M35.5,68.8 A27.5,27.5 0 1,1 72.5,68.8"
+        android:strokeColor="#88FFFFFF"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.9" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M42.5,66.6 A21.5,21.5 0 1,1 65.5,66.6"
+        android:strokeColor="#BBFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.9" />
+
+    <group
+        android:pivotX="54"
+        android:pivotY="48"
+        android:rotation="-32">
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M36.5,48 C38.5,35.8 69.5,35.8 71.5,48 C69.5,60.2 38.5,60.2 36.5,48 Z"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineJoin="round"
+            android:strokeWidth="2.8" />
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M42.6,40.2 Q45.3,48 42.6,55.8 M65.4,40.2 Q62.7,48 65.4,55.8"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round"
+            android:strokeWidth="2.3" />
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M48,48 L60,48 M50.8,45.0 L50.8,51.0 M54,44.6 L54,51.4 M57.2,45.0 L57.2,51.0"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round"
+            android:strokeWidth="2.2" />
+    </group>
+
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M39,82.5 L39,78.2 M44,82.5 L44,75.5 M49,82.5 L49,72.5 M54,82.5 L54,69.5 M59,82.5 L59,73.2 M64,82.5 L64,76.0 M69,82.5 L69,78.5"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.9" />
+</vector>

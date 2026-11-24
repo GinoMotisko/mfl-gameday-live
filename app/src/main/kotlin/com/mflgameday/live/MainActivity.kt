@@ -1,10 +1,12 @@
 package com.mflgameday.live
 
 import android.Manifest
+import android.graphics.Color as AndroidColor
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -17,8 +19,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalView
-import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mflgameday.live.model.OperatingMode
 import com.mflgameday.live.ui.GameDayAppShell
@@ -66,12 +66,14 @@ class MainActivity : ComponentActivity() {
       }
 
       MFLGameDayTheme(preset = uiState.settings.themePreset) {
-        val view = LocalView.current
         val isDark = LocalGameDayColors.current.isDark
         SideEffect {
-          val insetsController = WindowCompat.getInsetsController(window, view)
-          insetsController.isAppearanceLightStatusBars = !isDark
-          insetsController.isAppearanceLightNavigationBars = !isDark
+          val barStyle = if (isDark) {
+            SystemBarStyle.dark(AndroidColor.TRANSPARENT)
+          } else {
+            SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT)
+          }
+          enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
         }
 
         Surface(

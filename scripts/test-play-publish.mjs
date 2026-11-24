@@ -116,6 +116,7 @@ async function runTests() {
     const info = verifyAabBundleIntegrity(localAab);
     assert.equal(info.certSha256, EXPECTED_CERT_SHA256);
     assert.equal(info.hasEmbeddedProguardMap, true);
+    assert.equal(typeof info.hasNativeDebugSymbols, 'boolean');
   }
 
   console.log('[test-play-publish] ALL 5 SECURITY & TRANSACTION GATE TESTS PASSED');

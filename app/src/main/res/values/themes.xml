@@ -2,7 +2,5 @@
 <resources>
     <style name="Theme.MFLGameDay" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">#FF070D19</item>
-        <item name="android:statusBarColor">#FF070D19</item>
-        <item name="android:navigationBarColor">#FF070D19</item>
     </style>
 </resources>

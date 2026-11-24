@@ -5,23 +5,20 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <path
+        android:fillColor="#FF07140F"
+        android:pathData="M0,0h108v108h-108z" />
     <path android:pathData="M0,0h108v108h-108z">
         <aapt:attr name="android:fillColor">
             <gradient
-                android:startX="0"
-                android:startY="0"
-                android:endX="108"
-                android:endY="108"
-                android:type="linear">
-                <item android:offset="0.0" android:color="#FF071324" />
-                <item android:offset="0.55" android:color="#FF0B2942" />
-                <item android:offset="1.0" android:color="#FF064E3B" />
+                android:centerX="54"
+                android:centerY="49"
+                android:gradientRadius="52"
+                android:type="radial">
+                <item android:offset="0.0" android:color="#FF112E20" />
+                <item android:offset="0.62" android:color="#FF0A1D15" />
+                <item android:offset="1.0" android:color="#FF07140F" />
             </gradient>
         </aapt:attr>
     </path>
-    <!-- Yard line grid markings -->
-    <path
-        android:pathData="M0,36 L108,36 M0,54 L108,54 M0,72 L108,72"
-        android:strokeColor="#2200E676"
-        android:strokeWidth="1.2" />
 </vector>
