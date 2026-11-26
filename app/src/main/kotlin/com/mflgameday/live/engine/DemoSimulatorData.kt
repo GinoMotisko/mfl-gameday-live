@@ -10,6 +10,7 @@ import com.mflgameday.live.model.GameEventKind
 import com.mflgameday.live.model.GamePhase
 import com.mflgameday.live.model.LeagueConfig
 import com.mflgameday.live.model.LeagueLiveSnapshot
+import com.mflgameday.live.model.LiveFieldSituation
 import com.mflgameday.live.model.NflGameState
 import com.mflgameday.live.model.NflPlay
 import com.mflgameday.live.model.NflSide
@@ -86,7 +87,9 @@ object DemoSimulatorData {
     "P01" to listOf(
       ScoringBreakdownLine("Passing Yards", "268", 10.72),
       ScoringBreakdownLine("Passing TDs", "2", 8.00),
-      ScoringBreakdownLine("Rushing Yards", "19", 1.90)
+      ScoringBreakdownLine("Rushing Yards", "19", 1.90),
+      ScoringBreakdownLine("2-Pt Passing Conversions", "1", 2.00),
+      ScoringBreakdownLine("Fumbles Lost", "1", -2.00)
     ),
     "P02" to listOf(
       ScoringBreakdownLine("Receptions", "6", 6.00),
@@ -96,15 +99,19 @@ object DemoSimulatorData {
     "P03" to listOf(
       ScoringBreakdownLine("Passing Yards", "242", 9.68),
       ScoringBreakdownLine("Passing TDs", "2", 8.00),
-      ScoringBreakdownLine("Rushing TDs", "1", 6.00)
+      ScoringBreakdownLine("Rushing TDs", "1", 6.00),
+      ScoringBreakdownLine("2-Pt Rushing Conversions", "1", 2.00),
+      ScoringBreakdownLine("Interceptions Thrown", "1", -2.00)
     ),
     "P04" to listOf(
       ScoringBreakdownLine("Rushing Yards", "114", 11.40),
       ScoringBreakdownLine("Rushing TDs", "1", 6.00),
-      ScoringBreakdownLine("Receptions", "3", 3.00)
+      ScoringBreakdownLine("Receptions", "2", 2.00),
+      ScoringBreakdownLine("Receiving Yards", "10", 1.00)
     ),
     "P05" to listOf(
-      ScoringBreakdownLine("Rushing Yards", "79", 7.90),
+      ScoringBreakdownLine("Rushes", "14", 1.40),
+      ScoringBreakdownLine("Rushing Yards", "65", 6.50),
       ScoringBreakdownLine("Receptions", "4", 4.00),
       ScoringBreakdownLine("Receiving Yards", "42", 4.20)
     ),
@@ -112,24 +119,59 @@ object DemoSimulatorData {
       ScoringBreakdownLine("Receptions", "7", 7.00),
       ScoringBreakdownLine("Receiving Yards", "95", 9.50)
     ),
+    "P08" to listOf(
+      ScoringBreakdownLine("Receptions", "2", 2.00),
+      ScoringBreakdownLine("Receiving Yards", "44.2", 4.42),
+      ScoringBreakdownLine("2-Pt Receiving Conversions", "1", 2.00)
+    ),
+    "P09" to listOf(
+      ScoringBreakdownLine("Field Goals (40-49 yds)", "2", 6.00),
+      ScoringBreakdownLine("Extra Points", "3", 3.00)
+    ),
     "P10" to listOf(
       ScoringBreakdownLine("Defensive TDs", "1", 6.00),
       ScoringBreakdownLine("Interceptions", "2", 4.00),
       ScoringBreakdownLine("Sacks", "3", 3.00)
     ),
     "P11" to listOf(
-      ScoringBreakdownLine("Rushing Yards", "92", 9.20),
+      ScoringBreakdownLine("Rushes", "14", 1.40),
+      ScoringBreakdownLine("Rushing Yards", "78", 7.80),
       ScoringBreakdownLine("Rushing TDs", "1", 6.00),
-      ScoringBreakdownLine("Receptions", "4", 4.00)
+      ScoringBreakdownLine("Receptions", "2", 2.00),
+      ScoringBreakdownLine("Receiving Yards", "20", 2.00)
+    ),
+    "P12" to listOf(
+      ScoringBreakdownLine("Receptions", "2", 2.00),
+      ScoringBreakdownLine("Receiving Yards", "70", 7.00)
     ),
     "P21" to listOf(
       ScoringBreakdownLine("Passing Yards", "254", 10.16),
-      ScoringBreakdownLine("Passing TDs", "2", 8.00)
+      ScoringBreakdownLine("Passing TDs", "2", 8.00),
+      ScoringBreakdownLine("2-Pt Passing Conversions", "1", 2.00),
+      ScoringBreakdownLine("Fumbles Lost", "1", -2.00)
     ),
     "P22" to listOf(
       ScoringBreakdownLine("Receptions", "8", 8.00),
       ScoringBreakdownLine("Receiving Yards", "112", 11.20),
       ScoringBreakdownLine("Receiving TDs", "1", 6.00)
+    ),
+    "P23" to listOf(
+      ScoringBreakdownLine("Rushes", "12", 1.20),
+      ScoringBreakdownLine("Rushing Yards", "63", 6.30),
+      ScoringBreakdownLine("Receptions", "5", 5.00),
+      ScoringBreakdownLine("Receiving Yards", "20", 2.00)
+    ),
+    "P24" to listOf(
+      ScoringBreakdownLine("Rushing Yards", "88", 8.80),
+      ScoringBreakdownLine("Rushing TDs", "1", 6.00),
+      ScoringBreakdownLine("Receptions", "2", 2.00)
+    ),
+    "P26" to listOf(
+      ScoringBreakdownLine("Receptions", "4", 4.00),
+      ScoringBreakdownLine("Receiving Yards", "46.9", 4.69)
+    ),
+    "P27" to listOf(
+      ScoringBreakdownLine("Field Goals (50+ yds)", "1", 4.00)
     ),
     "P28" to listOf(
       ScoringBreakdownLine("Sacks", "4", 4.00),
@@ -499,14 +541,20 @@ object DemoSimulatorData {
     val idx = step % 5
     return when (idx) {
       0 -> {
-        // Baker Mayfield -> Chris Godwin 94-yard TD pass!
+        // Baker Mayfield -> Chris Godwin 94-yard TD pass + XP -> Commercial Break Awaiting Kickoff!
         val tbDet = currentGames.firstOrNull { it.id == "G_TB_DET" } ?: initialGames(nowMillis).first()
         val newAwayScore = tbDet.away.score + 7
         val updated = tbDet.copy(
           away = tbDet.away.copy(score = newAwayScore),
+          possessionEspnId = "27",
+          inRedZone = false,
+          isLiveDown = false,
+          fieldSituation = LiveFieldSituation.KICKOFF_PENDING,
           clock = "6:28",
           downDistanceText = "Kickoff",
-          lastPlayText = "Baker Mayfield pass deep middle to Chris Godwin for 94 yards, TOUCHDOWN."
+          possessionText = "TB 35",
+          yardLine = 35,
+          lastPlayText = "C.McLaughlin extra point is GOOD. Official Timeout."
         )
         val ev = GameEvent(
           id = "sim_tb_td_$nowMillis",
@@ -535,6 +583,9 @@ object DemoSimulatorData {
         val tbDet = currentGames.firstOrNull { it.id == "G_TB_DET" } ?: initialGames(nowMillis).first()
         val updated = tbDet.copy(
           possessionEspnId = "8",
+          inRedZone = false,
+          isLiveDown = true,
+          fieldSituation = LiveFieldSituation.SCRIMMAGE_DRIVE,
           clock = "5:44",
           downDistanceText = "2nd & 19 at DET 21",
           possessionText = "DET 21",
@@ -601,6 +652,8 @@ object DemoSimulatorData {
         val updated = phiDal.copy(
           possessionEspnId = "21",
           inRedZone = true,
+          isLiveDown = true,
+          fieldSituation = LiveFieldSituation.SCRIMMAGE_DRIVE,
           clock = "3:05",
           downDistanceText = "1st & Goal at DAL 8",
           possessionText = "DAL 8",
@@ -619,15 +672,20 @@ object DemoSimulatorData {
         replaceGame(currentGames, updated) to ev
       }
       else -> {
-        // 56-yard Field Goal in Dallas!
+        // 56-yard Field Goal in Dallas -> Commercial Break Awaiting Kickoff!
         val phiDal = currentGames.firstOrNull { it.id == "G_PHI_DAL" } ?: initialGames(nowMillis)[2]
         val newHome = phiDal.home.score + 3
         val updated = phiDal.copy(
           home = phiDal.home.copy(score = newHome),
+          possessionEspnId = "6",
           inRedZone = false,
+          isLiveDown = false,
+          fieldSituation = LiveFieldSituation.KICKOFF_PENDING,
           clock = "1:52",
           downDistanceText = "Kickoff",
-          lastPlayText = "Brandon Aubrey 56 yard field goal is GOOD."
+          possessionText = "DAL 35",
+          yardLine = 35,
+          lastPlayText = "B.Aubrey 56 yard field goal is GOOD. Official Timeout."
         )
         val ev = GameEvent(
           id = "sim_fg_$nowMillis",

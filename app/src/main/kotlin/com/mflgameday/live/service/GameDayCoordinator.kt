@@ -36,6 +36,7 @@ import com.mflgameday.live.model.GameEventKind
 import com.mflgameday.live.model.GamePhase
 import com.mflgameday.live.model.LeagueConfig
 import com.mflgameday.live.model.LeagueLiveSnapshot
+import com.mflgameday.live.model.LiveFieldSituationResolver
 import com.mflgameday.live.model.NflGameState
 import com.mflgameday.live.model.OperatingMode
 import com.mflgameday.live.model.PlayLogEntry
@@ -143,6 +144,8 @@ class GameDayCoordinator(
   private var broadcastGeneration: Long = 0L
   @Volatile
   private var isAppInForeground: Boolean = false
+  @Volatile
+  private var pausedExplicitlyByUser: Boolean = false
 
   private val _uiState = MutableStateFlow(
     GameDayUiState(
@@ -406,10 +409,12 @@ class GameDayCoordinator(
   }
 
   fun exitToSetup() {
+    pausedExplicitlyByUser = false
     pollLoopJob?.cancel()
     sleepJob?.cancel()
     pollLoopJob = null
     voiceEngine.stopAndClearQueue()
+    GameDayLiveService.cancelPregameWakeAlarm(appContext)
     val realLeagues = storage.loadLeagues()
     updateSettings { it.copy(operatingMode = OperatingMode.UNCONFIGURED) }
     _uiState.update { it.copy(leagues = realLeagues, statusMessage = "Setup") }
@@ -756,6 +761,7 @@ class GameDayCoordinator(
   fun startLiveEngine() {
     val mode = _uiState.value.settings.operatingMode
     if (mode == OperatingMode.UNCONFIGURED) return
+    pausedExplicitlyByUser = false
     _uiState.update { it.copy(isBroadcastPaused = false) }
     if (mode == OperatingMode.DEMO_SIMULATOR) {
       if (_uiState.value.nflGames.isEmpty()) {
@@ -772,13 +778,20 @@ class GameDayCoordinator(
     restartPollingLoop(syncService = true)
   }
 
-  fun pauseLiveBroadcastSession(reason: String = "Broadcast paused") {
+  fun pauseLiveBroadcastSession(
+    reason: String = "Broadcast paused",
+    explicitUserPause: Boolean = true
+  ) {
+    pausedExplicitlyByUser = explicitUserPause
     broadcastGeneration += 1L
     pollLoopJob?.cancel()
     sleepJob?.cancel()
     pollLoopJob = null
     sleepJob = null
     voiceEngine.stopAndClearQueue()
+    if (explicitUserPause) {
+      GameDayLiveService.cancelPregameWakeAlarm(appContext)
+    }
     _uiState.update {
       it.copy(
         isBroadcastPaused = true,
@@ -793,6 +806,7 @@ class GameDayCoordinator(
 
   fun resumeLiveBroadcastSession() {
     if (_uiState.value.settings.operatingMode == OperatingMode.UNCONFIGURED) return
+    pausedExplicitlyByUser = false
     _uiState.update { it.copy(isBroadcastPaused = false) }
     if (_uiState.value.settings.operatingMode == OperatingMode.DEMO_SIMULATOR) {
       _uiState.update { it.copy(statusMessage = "Live Demo Simulator Ready") }
@@ -875,6 +889,32 @@ class GameDayCoordinator(
     }
   }
 
+  fun onAppWindowFocused() {
+    val state = _uiState.value
+    val isLoopActive = pollLoopJob?.isActive == true
+    if (
+      ServiceLifecyclePolicy.shouldAutoResumeOnWindowFocus(
+        settings = state.settings,
+        isBroadcastPaused = state.isBroadcastPaused,
+        pausedExplicitlyByUser = pausedExplicitlyByUser,
+        isPollLoopActive = isLoopActive
+      )
+    ) {
+      DiagnosticsLogger.info(LogSubsystem.APP, "App window regained focus — resuming live broadcast")
+      resumeLiveBroadcastSession()
+    }
+  }
+
+  fun onPregameWakeAlarmFired() {
+    val state = _uiState.value
+    val mode = state.settings.operatingMode
+    if (mode != OperatingMode.MFL_AND_NFL_LIVE && mode != OperatingMode.NFL_LIVE_ONLY) return
+    if (!state.settings.runInBackgroundService || pausedExplicitlyByUser) return
+    if (pollLoopJob?.isActive == true && !state.isBroadcastPaused) return
+    DiagnosticsLogger.info(LogSubsystem.APP, "Pregame wake alarm fired — starting game-window broadcast standby")
+    restartPollingLoop(syncService = true)
+  }
+
   fun onMainActivityDestroyed(isChangingConfigurations: Boolean, isFinishing: Boolean) {
     val state = _uiState.value
     val serviceActive = GameDayLiveService.isRunningInForeground || GameDayLiveService.isStartPending
@@ -888,7 +928,10 @@ class GameDayCoordinator(
       )
     ) {
       GameDayTelemetry.recordSwipeCloseStop()
-      pauseLiveBroadcastSession("Stopped when closed before live service started")
+      pauseLiveBroadcastSession(
+        reason = "Stopped when closed before live service started",
+        explicitUserPause = false
+      )
     }
   }
 
@@ -925,6 +968,18 @@ class GameDayCoordinator(
     if (GameDayLiveService.isRunningInForeground || GameDayLiveService.isStartPending) {
       GameDayLiveService.stop(appContext)
     }
+    val snapState = _uiState.value
+    val nextWakeAt = ServiceLifecyclePolicy.computeNextPregameWakeEpochMillis(
+      settings = snapState.settings,
+      isBroadcastPaused = snapState.isBroadcastPaused,
+      nflGames = snapState.nflGames,
+      nowMillis = System.currentTimeMillis()
+    )
+    if (nextWakeAt != null) {
+      GameDayLiveService.schedulePregameWakeAlarm(appContext, nextWakeAt)
+    } else {
+      GameDayLiveService.cancelPregameWakeAlarm(appContext)
+    }
     if (hadActiveLoop) {
       DiagnosticsLogger.info(LogSubsystem.APP, logReason)
     }
@@ -932,12 +987,17 @@ class GameDayCoordinator(
       it.copy(
         isRefreshing = false,
         nextRefreshAtMillis = null,
-        statusMessage = "Standing By · Auto-wakes on open"
+        statusMessage = if (nextWakeAt != null) {
+          "Standing By · Auto-wakes 90m pregame"
+        } else {
+          "Standing By · Auto-wakes on open"
+        }
       )
     }
   }
 
   fun restartPollingLoop(syncService: Boolean = true) {
+    pausedExplicitlyByUser = false
     broadcastGeneration += 1L
     pollLoopJob?.cancel()
     sleepJob?.cancel()
@@ -1252,21 +1312,34 @@ class GameDayCoordinator(
       espnSucceeded = board.games.isNotEmpty()
       GameDayTelemetry.recordEspnPoll(success = espnSucceeded, latencyMs = System.currentTimeMillis() - espnStartMs)
       if (espnSucceeded) {
-        _uiState.update { it.copy(nflGames = board.games, currentSeasonYear = year, currentWeek = week) }
-        // Promote FGS early on live scoreboard arrival (~250ms), but defer any teardown (`allowStop = false`)
-        // until AFTER `differ` + `processDetectedEvents()` have queued any Final-Score TTS calls!
-        syncForegroundServiceState(nowMillis = System.currentTimeMillis(), allowStop = false)
-        detectedEvents.addAll(differ.ingestScoreboard(board.games, nowMillis = now, emitFallbackScoreEvents = false))
-
         val summaries = coroutineScope {
           board.liveEventIds.map { eventId ->
             async { nonCancellingCatching { espnClient.fetchGameSummary(eventId) }.getOrNull() }
           }.awaitAll().filterNotNull()
         }
         if (!canEmitForCycle(cycleGen)) return
+        val summaryByEventId = summaries.associateBy { it.eventId }
+        val refinedBoardGames = board.games.map { game ->
+          val plays = summaryByEventId[game.id]?.plays
+          if (!plays.isNullOrEmpty()) LiveFieldSituationResolver.refineWithPlayHistory(game, plays) else game
+        }
+        detectedEvents.addAll(
+          differ.ingestScoreboard(refinedBoardGames, nowMillis = now, emitFallbackScoreEvents = false)
+        )
         for (summary in summaries) {
+          differ.refineGameWithPlays(summary.eventId, summary.plays)
           detectedEvents.addAll(differ.ingestPlays(summary.plays, summary.eventId, nowMillis = now))
         }
+        _uiState.update {
+          it.copy(
+            nflGames = differ.stabilizedGames(refinedBoardGames),
+            currentSeasonYear = year,
+            currentWeek = week
+          )
+        }
+        // Promote FGS early on live scoreboard arrival (~300ms), but defer any teardown (`allowStop = false`)
+        // until AFTER `differ` + `processDetectedEvents()` have queued any Final-Score TTS calls!
+        syncForegroundServiceState(nowMillis = System.currentTimeMillis(), allowStop = false)
       }
     } catch (ce: CancellationException) {
       throw ce
@@ -1315,6 +1388,20 @@ class GameDayCoordinator(
     }
 
     if (!canEmitForCycle(cycleGen)) return
+
+    var totalEmittedEvents = 0
+    val preMflState = _uiState.value
+    val hasReadyExposuresForImmediateVoice =
+      preMflState.settings.operatingMode != OperatingMode.MFL_AND_NFL_LIVE ||
+        preMflState.leagues.isEmpty() ||
+        preMflState.leagueSnapshots.isNotEmpty()
+    if (hasReadyExposuresForImmediateVoice && detectedEvents.isNotEmpty()) {
+      // Speak ESPN NFL plays immediately (~300ms) instead of blocking 8–18s behind sequential MFL HTML scraping!
+      val immediateNflBatch = detectedEvents.toList()
+      detectedEvents.clear()
+      totalEmittedEvents += immediateNflBatch.size
+      processDetectedEvents(immediateNflBatch, forceSpeak = false)
+    }
 
     // 3. Poll every configured MFL league (dynamic starters, Best Ball optimal slots, breakdowns, pace)
     val currentState = _uiState.value
@@ -1460,7 +1547,10 @@ class GameDayCoordinator(
     }
 
     if (!canEmitForCycle(cycleGen)) return
-    processDetectedEvents(detectedEvents, forceSpeak = false)
+    if (detectedEvents.isNotEmpty()) {
+      totalEmittedEvents += detectedEvents.size
+      processDetectedEvents(detectedEvents, forceSpeak = false)
+    }
 
     val liveCount = _uiState.value.nflGames.count { it.phase == GamePhase.LIVE || it.phase == GamePhase.HALFTIME }
     if (warnings.isNotEmpty()) {
@@ -1468,7 +1558,7 @@ class GameDayCoordinator(
     } else {
       DiagnosticsLogger.info(
         LogSubsystem.APP,
-        "Poll OK: $liveCount live NFL games, ${_uiState.value.leagueSnapshots.size} MFL league(s), ${detectedEvents.size} new event(s)"
+        "Poll OK: $liveCount live NFL games, ${_uiState.value.leagueSnapshots.size} MFL league(s), $totalEmittedEvents new event(s)"
       )
     }
     _uiState.update {

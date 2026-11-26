@@ -4,6 +4,8 @@ import com.mflgameday.live.model.FantasyMatchup
 import com.mflgameday.live.model.GameEvent
 import com.mflgameday.live.model.GameEventKind
 import com.mflgameday.live.model.GamePhase
+import com.mflgameday.live.model.LiveFieldSituation
+import com.mflgameday.live.model.LiveFieldSituationResolver
 import com.mflgameday.live.model.NflGameState
 import com.mflgameday.live.model.NflPlay
 import com.mflgameday.live.model.NflSide
@@ -31,6 +33,18 @@ class EventDiffer(
   private val previousMatchupLeaderByKey = HashMap<String, String?>()
 
   fun currentGame(gameId: String): NflGameState? = gamesById[gameId]
+
+  fun stabilizedGames(orderedRawGames: List<NflGameState>): List<NflGameState> =
+    orderedRawGames.map { gamesById[it.id] ?: it }
+
+  fun refineGameWithPlays(gameId: String, plays: List<NflPlay>): NflGameState? {
+    val cur = gamesById[gameId] ?: return null
+    val refined = LiveFieldSituationResolver.refineWithPlayHistory(cur, plays)
+    if (refined != cur) {
+      gamesById[gameId] = refined
+    }
+    return refined
+  }
 
   fun reset() {
     gamesById.clear()
@@ -74,14 +88,86 @@ class EventDiffer(
         continue
       }
 
-      // Preserve possession & red-zone across ESPN's post-score/timeout blinks and non-down PAT/kickoffs
-      val stabilized = if (incoming.possessionEspnId == null || !incoming.isLiveDown) {
-        incoming.copy(
-          possessionEspnId = prev.possessionEspnId,
-          inRedZone = prev.inRedZone
+      // Distinguish genuine mid-drive blinks from post-score PAT & commercial-break Kickoff states
+      val awayDeltaRaw = incoming.away.score - prev.away.score
+      val homeDeltaRaw = incoming.home.score - prev.home.score
+      val scoreIncreased = awayDeltaRaw > 0 || homeDeltaRaw > 0
+      val kickoffCompletedNow = run {
+        val lower = incoming.lastPlayText.trim().lowercase()
+        (lower.contains("kicks ") || lower.startsWith("kickoff") || lower.contains("touchback")) &&
+          !lower.contains("touchdown")
+      }
+      val stabilized = when {
+        incoming.phase != GamePhase.LIVE -> incoming.copy(
+          inRedZone = false,
+          fieldSituation = LiveFieldSituation.SCRIMMAGE_DRIVE
         )
-      } else {
-        incoming
+        incoming.isLiveDown && incoming.possessionEspnId != null -> incoming.copy(
+          fieldSituation = LiveFieldSituation.SCRIMMAGE_DRIVE
+        )
+        scoreIncreased -> {
+          val scoredAway = awayDeltaRaw >= homeDeltaRaw
+          val maxDelta = maxOf(awayDeltaRaw, homeDeltaRaw)
+          val wasPatPending = prev.fieldSituation == LiveFieldSituation.PAT_PENDING
+          val nextSit = when {
+            wasPatPending -> LiveFieldSituation.KICKOFF_PENDING
+            incoming.fieldSituation == LiveFieldSituation.KICKOFF_PENDING -> LiveFieldSituation.KICKOFF_PENDING
+            maxDelta == 6 && !(awayDeltaRaw > 0 && homeDeltaRaw > 0) -> LiveFieldSituation.PAT_PENDING
+            else -> LiveFieldSituation.KICKOFF_PENDING
+          }
+          val isSafetyKick = maxDelta == 2 && !wasPatPending && !(awayDeltaRaw > 0 && homeDeltaRaw > 0)
+          val kickingOrTryEspnId = when {
+            // NFL Rule 11-3-2: after ANY try (including a defensive 2-pt conversion return), the TD-scoring team kicks off
+            wasPatPending && prev.possessionEspnId != null -> prev.possessionEspnId
+            isSafetyKick -> if (scoredAway) incoming.home.espnId else incoming.away.espnId
+            else -> if (scoredAway) incoming.away.espnId else incoming.home.espnId
+          }
+          incoming.copy(
+            possessionEspnId = kickingOrTryEspnId,
+            inRedZone = false,
+            fieldSituation = nextSit
+          )
+        }
+        prev.fieldSituation == LiveFieldSituation.KICKOFF_PENDING -> {
+          val possessionFlippedToReceiver =
+            incoming.possessionEspnId != null &&
+              prev.possessionEspnId != null &&
+              incoming.possessionEspnId != prev.possessionEspnId
+          if (kickoffCompletedNow || possessionFlippedToReceiver) {
+            // Dynamic Kickoff touchback / return completed before 1st & 10 down marker posted -> exit KICKOFF_PENDING!
+            incoming.copy(
+              inRedZone = false,
+              fieldSituation = LiveFieldSituation.SCRIMMAGE_DRIVE
+            )
+          } else {
+            // Once XP/2-Pt/FG resolved, stay in KICKOFF_PENDING across Official Timeouts until kickoff!
+            incoming.copy(
+              possessionEspnId = incoming.possessionEspnId ?: prev.possessionEspnId,
+              inRedZone = false,
+              fieldSituation = LiveFieldSituation.KICKOFF_PENDING
+            )
+          }
+        }
+        incoming.fieldSituation != LiveFieldSituation.SCRIMMAGE_DRIVE -> incoming.copy(
+          possessionEspnId = incoming.possessionEspnId ?: prev.possessionEspnId,
+          inRedZone = false
+        )
+        prev.fieldSituation != LiveFieldSituation.SCRIMMAGE_DRIVE -> {
+          // Official Timeout / TV Commercial break after a TD: keep awaiting PAT/Kickoff until next 1st down!
+          incoming.copy(
+            possessionEspnId = incoming.possessionEspnId ?: prev.possessionEspnId,
+            inRedZone = false,
+            fieldSituation = prev.fieldSituation
+          )
+        }
+        incoming.possessionEspnId == null || !incoming.isLiveDown -> {
+          // Mid-drive timeout without any score change: preserve offensive possession & red-zone state
+          incoming.copy(
+            possessionEspnId = prev.possessionEspnId,
+            inRedZone = prev.inRedZone
+          )
+        }
+        else -> incoming
       }
       gamesById[stabilized.id] = stabilized
 

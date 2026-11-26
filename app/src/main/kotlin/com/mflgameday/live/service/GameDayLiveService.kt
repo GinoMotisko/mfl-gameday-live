@@ -1,5 +1,6 @@
 package com.mflgameday.live.service
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,9 +9,14 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.drawable.Icon
+import android.media.MediaMetadata
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
+import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
-import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.lifecycle.LifecycleService
 import com.mflgameday.live.MainActivity
@@ -20,9 +26,11 @@ import com.mflgameday.live.diagnostics.LogSubsystem
 import com.mflgameday.live.model.GamePhase
 
 /**
- * In-process BroadcastReceiver handling notification shade actions (`Mute/Unmute`, `Refresh`, `Stop`)
- * and user swipe-dismissal (`setDeleteIntent`) directly on `GameDayCoordinator` without re-triggering
- * `startForegroundService()` or redundant `ServiceCompat.startForeground()` promotions on Android 12–16.
+ * In-process BroadcastReceiver handling media/notification controls (`Mute/Unmute`, `Refresh`, `Stop`).
+ * Importantly, on Android 14–16 (`targetSdk = 36`) tapping "Clear all" in the Pixel notification shade
+ * dismisses ongoing notifications (`ACTION_NOTIFICATION_DISMISSED`). Just like Spotify / YouTube Music,
+ * clearing the shade MUST NOT pause or kill the live audio broadcast — only explicit `Stop`, swipe-close
+ * from Recent Apps (`onTaskRemoved`), or games finishing (`FINAL`) stops the announcer.
  */
 class NotificationDismissReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent?) {
@@ -35,33 +43,52 @@ class NotificationDismissReceiver : BroadcastReceiver() {
         app.coordinator.refreshNow()
       }
       GameDayLiveService.ACTION_STOP_SERVICE -> {
-        app.coordinator.pauseLiveBroadcastSession("Broadcast stopped from notification")
+        app.coordinator.pauseLiveBroadcastSession(
+          reason = "Broadcast stopped from notification",
+          explicitUserPause = true
+        )
       }
       GameDayLiveService.ACTION_NOTIFICATION_DISMISSED -> {
-        if (!GameDayLiveService.isRunningInForeground && !GameDayLiveService.isStartPending) return
-        app.coordinator.pauseLiveBroadcastSession("Broadcast stopped when notification was dismissed")
+        // User cleared notifications in the Android 14–16 shade: keep broadcast alive and allow next
+        // score/play change to re-post the live scoreboard card without killing audio!
+        GameDayLiveService.onShadeCardDismissedBySystemUi()
       }
     }
   }
 }
 
 /**
- * Android 14 / 15 / 16 / 17 compliant `mediaPlayback` Foreground Service.
- * Runs strictly during active NFL game windows (or Demo Simulator), keeping live-score polling
- * and audible TTS play-by-play uninterrupted while the screen is off or in background apps,
- * and tearing down automatically once games conclude or when dismissed by the user.
+ * Local zero-server Sunday morning wake receiver (`AlarmManager.setWindow`) that wakes
+ * `GameDayCoordinator` automatically when the 90-minute pregame broadcast window opens.
+ */
+class PregameWakeReceiver : BroadcastReceiver() {
+  override fun onReceive(context: Context, intent: Intent?) {
+    if (intent?.action != GameDayLiveService.ACTION_PREGAME_WAKE) return
+    val app = context.applicationContext as? MflGameDayApp ?: return
+    app.coordinator.onPregameWakeAlarmFired()
+  }
+}
+
+/**
+ * Android 14 / 15 / 16 / 17 compliant `mediaPlayback` Foreground Service with native `MediaSession`,
+ * `PARTIAL_WAKE_LOCK`, and low-latency `WifiLock` so Pixel/Samsung devices never stall sockets or
+ * drop announcements when the screen is off.
  */
 class GameDayLiveService : LifecycleService() {
 
   private var wakeLock: PowerManager.WakeLock? = null
+  private var wifiLock: WifiManager.WifiLock? = null
+  private var mediaSession: MediaSession? = null
 
   companion object {
     private const val CHANNEL_ID = "mfl_gameday_live_broadcast"
     private const val NOTIFICATION_ID = 2026
+    private const val PREGAME_ALARM_REQ_CODE = 2090
     internal const val ACTION_TOGGLE_MUTE = "com.mflgameday.live.ACTION_TOGGLE_MUTE"
     internal const val ACTION_REFRESH_NOW = "com.mflgameday.live.ACTION_REFRESH_NOW"
     internal const val ACTION_STOP_SERVICE = "com.mflgameday.live.ACTION_STOP_SERVICE"
     internal const val ACTION_NOTIFICATION_DISMISSED = "com.mflgameday.live.ACTION_NOTIFICATION_DISMISSED"
+    internal const val ACTION_PREGAME_WAKE = "com.mflgameday.live.ACTION_PREGAME_WAKE"
 
     @Volatile
     internal var isRunningInForeground: Boolean = false
@@ -75,6 +102,16 @@ class GameDayLiveService : LifecycleService() {
     @Volatile
     private var lastRenderedSignature: String? = null
 
+    @Volatile
+    private var activeMediaSessionToken: MediaSession.Token? = null
+
+    @Volatile
+    private var activeInstance: GameDayLiveService? = null
+
+    internal fun onShadeCardDismissedBySystemUi() {
+      lastRenderedSignature = null
+    }
+
     internal fun markStopped() {
       isRunningInForeground = false
       isStartPending = false
@@ -82,7 +119,42 @@ class GameDayLiveService : LifecycleService() {
       lastRenderedSignature = null
     }
 
+    fun schedulePregameWakeAlarm(context: Context, triggerAtEpochMillis: Long) {
+      runCatching {
+        val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val pi = PendingIntent.getBroadcast(
+          context.applicationContext,
+          PREGAME_ALARM_REQ_CODE,
+          Intent(context.applicationContext, PregameWakeReceiver::class.java).setAction(ACTION_PREGAME_WAKE),
+          PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        // Inexact 5-minute window requires ZERO exact-alarm permissions on Android 12–16!
+        am.setWindow(AlarmManager.RTC_WAKEUP, triggerAtEpochMillis, 5L * 60_000L, pi)
+        DiagnosticsLogger.info(
+          LogSubsystem.APP,
+          "Scheduled local pregame broadcast wakeup for ${java.time.Instant.ofEpochMilli(triggerAtEpochMillis)}"
+        )
+      }
+    }
+
+    fun cancelPregameWakeAlarm(context: Context) {
+      runCatching {
+        val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val pi = PendingIntent.getBroadcast(
+          context.applicationContext,
+          PREGAME_ALARM_REQ_CODE,
+          Intent(context.applicationContext, PregameWakeReceiver::class.java).setAction(ACTION_PREGAME_WAKE),
+          PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+        )
+        if (pi != null) {
+          am.cancel(pi)
+          pi.cancel()
+        }
+      }
+    }
+
     fun start(context: Context) {
+      cancelPregameWakeAlarm(context)
       pendingStopRequested = false
       if (isRunningInForeground) {
         notifySummaryUpdate(context)
@@ -106,8 +178,6 @@ class GameDayLiveService : LifecycleService() {
 
     fun stop(context: Context) {
       if (isStartPending && !isRunningInForeground) {
-        // Android 12–16 FGS timeout invariant: never call stopService() while startForegroundService()
-        // is already in-flight in ActivityManagerService; let onStartCommand() promote then immediately stop!
         pendingStopRequested = true
         return
       }
@@ -142,14 +212,14 @@ class GameDayLiveService : LifecycleService() {
       }
 
       val summary = computeSummary(state, now)
+      activeInstance?.syncMediaSessionMetadataAndState(summary, muted = state.settings.muted)
       if (summary.signature == lastRenderedSignature) {
-        // Identical title/body/mute state: do not call nm.notify() so Android never resets timestamp or resurfaces shade!
         return
       }
       lastRenderedSignature = summary.signature
       val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
       runCatching {
-        nm.notify(NOTIFICATION_ID, buildNotificationFromSummary(context, summary))
+        nm.notify(NOTIFICATION_ID, buildNotificationFromSummary(context, summary, activeMediaSessionToken))
       }
     }
 
@@ -191,15 +261,22 @@ class GameDayLiveService : LifecycleService() {
       )
     }
 
-    internal fun buildNotification(context: Context, coordinator: GameDayCoordinator): Notification {
-      val summary = computeSummary(coordinator.uiState.value, System.currentTimeMillis())
+    internal fun buildNotification(
+      context: Context,
+      coordinator: GameDayCoordinator,
+      sessionToken: MediaSession.Token? = activeMediaSessionToken
+    ): Notification {
+      val state = coordinator.uiState.value
+      val summary = computeSummary(state, System.currentTimeMillis())
+      activeInstance?.syncMediaSessionMetadataAndState(summary, muted = state.settings.muted)
       lastRenderedSignature = summary.signature
-      return buildNotificationFromSummary(context, summary)
+      return buildNotificationFromSummary(context, summary, sessionToken)
     }
 
     private fun buildNotificationFromSummary(
       context: Context,
-      summary: ServiceLifecyclePolicy.NotificationSummary
+      summary: ServiceLifecyclePolicy.NotificationSummary,
+      sessionToken: MediaSession.Token?
     ): Notification {
       val openIntent = PendingIntent.getActivity(
         context,
@@ -238,44 +315,79 @@ class GameDayLiveService : LifecycleService() {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
       )
 
-      return NotificationCompat.Builder(context, CHANNEL_ID)
+      val muteIcon = if (summary.muteActionLabel == "Unmute") {
+        android.R.drawable.ic_lock_silent_mode
+      } else {
+        android.R.drawable.ic_lock_silent_mode_off
+      }
+      val muteAction = Notification.Action.Builder(
+        Icon.createWithResource(context, muteIcon),
+        summary.muteActionLabel,
+        muteIntent
+      ).build()
+      val refreshAction = Notification.Action.Builder(
+        Icon.createWithResource(context, android.R.drawable.stat_notify_sync),
+        "Refresh",
+        refreshIntent
+      ).build()
+      val stopAction = Notification.Action.Builder(
+        Icon.createWithResource(context, android.R.drawable.ic_menu_close_clear_cancel),
+        "Stop",
+        stopIntent
+      ).build()
+
+      val builder = Notification.Builder(context, CHANNEL_ID)
         .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
         .setContentTitle(summary.title)
         .setContentText(summary.body)
-        .setStyle(NotificationCompat.BigTextStyle().bigText(summary.body))
         .setContentIntent(openIntent)
         .setDeleteIntent(dismissIntent)
         .setOngoing(true)
         .setOnlyAlertOnce(true)
-        .setSilent(true)
         .setShowWhen(false)
-        .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-        .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
-        .addAction(0, summary.muteActionLabel, muteIntent)
-        .addAction(0, "Refresh", refreshIntent)
-        .addAction(0, "Stop", stopIntent)
-        .build()
+        .setVisibility(Notification.VISIBILITY_PUBLIC)
+        .setCategory(Notification.CATEGORY_TRANSPORT)
+        .addAction(muteAction)
+        .addAction(refreshAction)
+        .addAction(stopAction)
+
+      if (sessionToken != null) {
+        builder.setStyle(
+          Notification.MediaStyle()
+            .setMediaSession(sessionToken)
+            .setShowActionsInCompactView(0, 1, 2)
+        )
+      } else {
+        builder.setStyle(Notification.BigTextStyle().bigText(summary.body))
+      }
+
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+      }
+
+      return builder.build()
     }
   }
 
   override fun onCreate() {
     super.onCreate()
+    activeInstance = this
     lastRenderedSignature = null
     ensureChannel()
+    initMediaSession()
     acquirePartialWakeLock()
+    acquireWifiLock()
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     super.onStartCommand(intent, flags, startId)
     val coordinator = (application as MflGameDayApp).coordinator
 
-    // Android 12–16 strictly requires calling startForeground() within the FGS timeout window
-    // whenever startForegroundService() was queued — even if pendingStopRequested is true!
     val wasAlreadyForeground = isRunningInForeground
     val promoted = if (wasAlreadyForeground && !pendingStopRequested) {
       true
     } else {
-      val notification = buildNotification(this, coordinator)
+      val notification = buildNotification(this, coordinator, mediaSession?.sessionToken)
       val fgsType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
       runCatching {
         ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, fgsType)
@@ -310,6 +422,7 @@ class GameDayLiveService : LifecycleService() {
     }
 
     isRunningInForeground = true
+    mediaSession?.isActive = true
     if (!wasAlreadyForeground) {
       com.mflgameday.live.diagnostics.GameDayTelemetry.recordServiceStart()
     }
@@ -327,7 +440,10 @@ class GameDayLiveService : LifecycleService() {
     if (coordinator != null && ServiceLifecyclePolicy.shouldStopOnTaskRemoved(coordinator.uiState.value.settings)) {
       markStopped()
       com.mflgameday.live.diagnostics.GameDayTelemetry.recordSwipeCloseStop()
-      coordinator.pauseLiveBroadcastSession("Stopped when swiped closed from Recent Apps")
+      coordinator.pauseLiveBroadcastSession(
+        reason = "Stopped when swiped closed from Recent Apps",
+        explicitUserPause = false
+      )
       stopForeground(STOP_FOREGROUND_REMOVE)
       stopSelf()
     }
@@ -336,11 +452,85 @@ class GameDayLiveService : LifecycleService() {
 
   override fun onDestroy() {
     markStopped()
+    activeInstance = null
+    activeMediaSessionToken = null
+    releaseMediaSession()
+    releaseWifiLock()
     releaseWakeLock()
     super.onDestroy()
   }
 
   override fun onBind(intent: Intent): IBinder? = super.onBind(intent)
+
+  private fun initMediaSession() {
+    runCatching {
+      val coordinator = (application as MflGameDayApp).coordinator
+      val session = MediaSession(this, "GameDayLiveBroadcast").apply {
+        setCallback(object : MediaSession.Callback() {
+          override fun onPlay() {
+            coordinator.updateSettings { it.copy(muted = false) }
+          }
+
+          override fun onPause() {
+            coordinator.updateSettings { it.copy(muted = true) }
+          }
+
+          override fun onSkipToNext() {
+            coordinator.refreshNow()
+          }
+
+          override fun onStop() {
+            coordinator.pauseLiveBroadcastSession(
+              reason = "Broadcast stopped from media player",
+              explicitUserPause = true
+            )
+          }
+        })
+        isActive = true
+      }
+      mediaSession = session
+      activeMediaSessionToken = session.sessionToken
+    }
+  }
+
+  internal fun syncMediaSessionMetadataAndState(
+    summary: ServiceLifecyclePolicy.NotificationSummary,
+    muted: Boolean
+  ) {
+    val session = mediaSession ?: return
+    runCatching {
+      val pbState = PlaybackState.Builder()
+        .setActions(
+          PlaybackState.ACTION_PLAY or
+            PlaybackState.ACTION_PAUSE or
+            PlaybackState.ACTION_PLAY_PAUSE or
+            PlaybackState.ACTION_STOP or
+            PlaybackState.ACTION_SKIP_TO_NEXT
+        )
+        .setState(
+          if (muted) PlaybackState.STATE_PAUSED else PlaybackState.STATE_PLAYING,
+          PlaybackState.PLAYBACK_POSITION_UNKNOWN,
+          1.0f
+        )
+        .build()
+      session.setPlaybackState(pbState)
+
+      val meta = MediaMetadata.Builder()
+        .putString(MediaMetadata.METADATA_KEY_TITLE, summary.title)
+        .putString(MediaMetadata.METADATA_KEY_ARTIST, summary.body)
+        .putString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, summary.body)
+        .build()
+      session.setMetadata(meta)
+    }
+  }
+
+  private fun releaseMediaSession() {
+    runCatching {
+      mediaSession?.isActive = false
+      mediaSession?.release()
+      mediaSession = null
+    }
+  }
 
   private fun ensureChannel() {
     val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -367,7 +557,6 @@ class GameDayLiveService : LifecycleService() {
       val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
       wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MFLGameDay::LiveAnnouncerWakeLock").apply {
         setReferenceCounted(false)
-        // Bounded to 12 hours max (covers full Sunday 1pm -> midnight slate safely; released immediately on stop)
         acquire(12 * 60 * 60 * 1000L)
       }
     }
@@ -379,6 +568,31 @@ class GameDayLiveService : LifecycleService() {
         wakeLock?.release()
       }
       wakeLock = null
+    }
+  }
+
+  private fun acquireWifiLock() {
+    runCatching {
+      val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return
+      @Suppress("DEPRECATION")
+      val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+      } else {
+        WifiManager.WIFI_MODE_FULL_HIGH_PERF
+      }
+      wifiLock = wm.createWifiLock(mode, "MFLGameDay::LiveAnnouncerWifiLock").apply {
+        setReferenceCounted(false)
+        acquire()
+      }
+    }
+  }
+
+  private fun releaseWifiLock() {
+    runCatching {
+      if (wifiLock?.isHeld == true) {
+        wifiLock?.release()
+      }
+      wifiLock = null
     }
   }
 }

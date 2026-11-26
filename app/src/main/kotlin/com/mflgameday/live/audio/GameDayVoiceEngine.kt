@@ -11,24 +11,26 @@ import android.speech.tts.Voice
 import com.mflgameday.live.model.GameDaySettings
 import com.mflgameday.live.model.GameEventKind
 import com.mflgameday.live.model.VoiceOption
-import com.mflgameday.live.model.VoicePersona
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.PriorityBlockingQueue
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * Priority-queued Android TextToSpeech broadcast announcer with transient audio ducking,
- * multi-voice discovery, curated GameDay voice personas, and optional stadium sound effects.
+ * Priority-queued Android TextToSpeech broadcast announcer hardened for Pixel / Android 14–16
+ * background survival: handles `UtteranceProgressListener.onStop`, guards against wedged Binder
+ * callbacks with bounded timeouts, and preserves queued utterances across background TTS rebinds.
  */
 class GameDayVoiceEngine(context: Context) {
   private val appContext = context.applicationContext
@@ -41,7 +43,8 @@ class GameDayVoiceEngine(context: Context) {
     val text: String,
     val kind: GameEventKind?,
     val settingsSnapshot: GameDaySettings,
-    val playChime: Boolean
+    val playChime: Boolean,
+    val retryCount: Int = 0
   ) : Comparable<QueuedSpeech> {
     override fun compareTo(other: QueuedSpeech): Int {
       val pCmp = other.priority.compareTo(this.priority)
@@ -59,6 +62,11 @@ class GameDayVoiceEngine(context: Context) {
   @Volatile
   var installedDescriptors: List<InstalledVoiceDescriptor> = emptyList()
     private set
+
+  @Volatile
+  private var activeUtteranceId: String? = null
+
+  @Volatile
   private var currentUtteranceDone: CompletableDeferred<Unit>? = null
 
   private val _ttsReady = MutableStateFlow(false)
@@ -83,6 +91,7 @@ class GameDayVoiceEngine(context: Context) {
 
   private val audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
     .setAudioAttributes(speechAudioAttributes)
+    .setAcceptsDelayedFocusGain(true)
     .setWillPauseWhenDucked(false)
     .setOnAudioFocusChangeListener { /* transient ducking handled by OS mixer */ }
     .build()
@@ -90,6 +99,12 @@ class GameDayVoiceEngine(context: Context) {
   init {
     initializeTts()
     startWorkerLoop()
+  }
+
+  private fun completeIfCurrentUtterance(utteranceId: String?) {
+    if (utteranceId == null || utteranceId == activeUtteranceId) {
+      currentUtteranceDone?.complete(Unit)
+    }
   }
 
   private fun initializeTts() {
@@ -100,20 +115,28 @@ class GameDayVoiceEngine(context: Context) {
         engine.language = Locale.US
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
           override fun onStart(utteranceId: String?) {
-            _isSpeaking.value = true
+            if (utteranceId == null || utteranceId == activeUtteranceId) {
+              _isSpeaking.value = true
+            }
           }
 
           override fun onDone(utteranceId: String?) {
-            currentUtteranceDone?.complete(Unit)
+            completeIfCurrentUtterance(utteranceId)
+          }
+
+          override fun onStop(utteranceId: String?, interrupted: Boolean) {
+            // Critical on Pixel / Android 14–16: audio route changes, assistant/call steals, or
+            // TTS service restarts invoke onStop() instead of onDone()/onError()!
+            completeIfCurrentUtterance(utteranceId)
           }
 
           @Deprecated("Deprecated in Java")
           override fun onError(utteranceId: String?) {
-            currentUtteranceDone?.complete(Unit)
+            completeIfCurrentUtterance(utteranceId)
           }
 
           override fun onError(utteranceId: String?, errorCode: Int) {
-            currentUtteranceDone?.complete(Unit)
+            completeIfCurrentUtterance(utteranceId)
           }
         })
         refreshAvailableVoices()
@@ -217,8 +240,6 @@ class GameDayVoiceEngine(context: Context) {
     }
     val priority = if (highPriority) basePriority + 25 else basePriority
     if (!settings.muted) {
-      // Synchronously mark speaking BEFORE the worker coroutine wakes so GameDayLiveService & WakeLock
-      // never tear down during the microsecond gap after the final game of a slate flips to FINAL!
       _isSpeaking.value = true
     }
     speechQueue.offer(
@@ -244,7 +265,8 @@ class GameDayVoiceEngine(context: Context) {
     sampleKind: GameEventKind? = GameEventKind.TOUCHDOWN
   ) {
     speechQueue.clear()
-    tts?.stop()
+    activeUtteranceId = null
+    runCatching { tts?.stop() }
     currentUtteranceDone?.complete(Unit)
     speechQueue.offer(
       QueuedSpeech(
@@ -266,6 +288,7 @@ class GameDayVoiceEngine(context: Context) {
 
   fun stopAndClearQueue() {
     speechQueue.clear()
+    activeUtteranceId = null
     runCatching { tts?.stop() }
     currentUtteranceDone?.complete(Unit)
     _isSpeaking.value = false
@@ -283,10 +306,27 @@ class GameDayVoiceEngine(context: Context) {
     scope.launch {
       for (signal in queueSignal) {
         while (speechQueue.isNotEmpty()) {
+          // Wait up to 5s if Google TTS is still binding on cold start or rebinding after background unbind
+          if (!_ttsReady.value) {
+            if (tts == null) initializeTts()
+            val boundInTime = withTimeoutOrNull(5_000L) {
+              _ttsReady.first { it }
+            } != null
+            if (!boundInTime) {
+              com.mflgameday.live.diagnostics.DiagnosticsLogger.warn(
+                com.mflgameday.live.diagnostics.LogSubsystem.TTS_AUDIO,
+                "Timed out waiting 5s for Android TextToSpeech bind; clearing stalled batch"
+              )
+              speechQueue.clear()
+              break
+            }
+          }
+
           val item = speechQueue.poll() ?: break
           if (item.settingsSnapshot.muted) continue
           speakSingleItem(item)
         }
+        activeUtteranceId = null
         _isSpeaking.value = false
         _activeSpeechText.value = null
         runCatching { audioManager.abandonAudioFocusRequest(audioFocusRequest) }
@@ -307,6 +347,9 @@ class GameDayVoiceEngine(context: Context) {
 
     val engine = tts
     if (engine == null || !_ttsReady.value) {
+      if (item.retryCount < 1) {
+        speechQueue.offer(item.copy(retryCount = item.retryCount + 1, playChime = false))
+      }
       return
     }
 
@@ -332,8 +375,9 @@ class GameDayVoiceEngine(context: Context) {
     engine.setPitch(plan.pitch.coerceIn(0.6f, 1.6f))
 
     val doneDeferred = CompletableDeferred<Unit>()
-    currentUtteranceDone = doneDeferred
     val utteranceId = "mfl_gd_${UUID.randomUUID()}"
+    activeUtteranceId = utteranceId
+    currentUtteranceDone = doneDeferred
     val params = Bundle().apply {
       putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
     }
@@ -342,18 +386,27 @@ class GameDayVoiceEngine(context: Context) {
     if (result == TextToSpeech.ERROR) {
       com.mflgameday.live.diagnostics.DiagnosticsLogger.warn(
         com.mflgameday.live.diagnostics.LogSubsystem.TTS_AUDIO,
-        "TTS speak returned ERROR; rebinding engine automatically"
+        "TTS speak returned ERROR in background; rebinding engine & retrying utterance once"
       )
+      activeUtteranceId = null
       doneDeferred.complete(Unit)
+      if (item.retryCount < 1) {
+        speechQueue.offer(item.copy(retryCount = item.retryCount + 1, playChime = false))
+      }
       runCatching { engine.shutdown() }
+      tts = null
       _ttsReady.value = false
       initializeTts()
-    } else {
-      com.mflgameday.live.diagnostics.DiagnosticsLogger.info(
-        com.mflgameday.live.diagnostics.LogSubsystem.TTS_AUDIO,
-        "Spoke: ${item.text.take(120)}"
-      )
+      return
     }
-    doneDeferred.await()
+
+    com.mflgameday.live.diagnostics.DiagnosticsLogger.info(
+      com.mflgameday.live.diagnostics.LogSubsystem.TTS_AUDIO,
+      "Spoke: ${item.text.take(120)}"
+    )
+    // Bound max wait to 25s so a silent Binder death in com.google.android.tts can never freeze Sunday calls
+    withTimeoutOrNull(25_000L) {
+      doneDeferred.await()
+    }
   }
 }

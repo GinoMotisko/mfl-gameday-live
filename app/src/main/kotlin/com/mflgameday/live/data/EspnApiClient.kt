@@ -1,6 +1,8 @@
 package com.mflgameday.live.data
 
 import com.mflgameday.live.model.GamePhase
+import com.mflgameday.live.model.LiveFieldSituation
+import com.mflgameday.live.model.LiveFieldSituationResolver
 import com.mflgameday.live.model.NflGameState
 import com.mflgameday.live.model.NflPlay
 import com.mflgameday.live.model.NflSide
@@ -97,6 +99,37 @@ class EspnApiClient(
 
       val situation = comp.obj("situation")
       val down = situation?.intOrNull("down") ?: 0
+      val isLiveDown = down >= 1
+      val awaySide = parseSide(awayComp)
+      val homeSide = parseSide(homeComp)
+      val possessionEspnId = situation?.str("possession")
+      val possTeam = when (possessionEspnId) {
+        awaySide.espnId -> awaySide.team
+        homeSide.espnId -> homeSide.team
+        else -> null
+      }
+      val rawInRedZone = situation?.str("isRedZone")?.toBooleanStrictOrNull() ?: false
+      val downDistanceText = situation?.strOrEmpty("downDistanceText").orEmpty()
+      val possessionText = situation?.strOrEmpty("possessionText").orEmpty()
+      val lastPlayObj = situation?.obj("lastPlay")
+      val lastPlayText = lastPlayObj?.strOrEmpty("text").orEmpty()
+      val lastPlayTypeText = lastPlayObj?.obj("type")?.strOrEmpty("text").orEmpty()
+      val period = statusObj?.intOrZero("period") ?: 0
+      val clock = statusObj?.strOrEmpty("displayClock").orEmpty()
+
+      val fieldSituation = LiveFieldSituationResolver.classifyStateless(
+        phase = phase,
+        isLiveDown = isLiveDown,
+        inRedZoneRaw = rawInRedZone,
+        possessionTeam = possTeam,
+        downDistanceText = downDistanceText,
+        possessionText = possessionText,
+        lastPlayTypeText = lastPlayTypeText,
+        lastPlayText = lastPlayText,
+        period = period,
+        clock = clock
+      )
+
       val broadcasts = (comp["broadcasts"] as? JsonArray)
         ?.firstOrNull()
         ?.let { it as? JsonObject }
@@ -107,18 +140,19 @@ class EspnApiClient(
       games.add(
         NflGameState(
           id = id,
-          away = parseSide(awayComp),
-          home = parseSide(homeComp),
+          away = awaySide,
+          home = homeSide,
           phase = phase,
-          period = statusObj?.intOrZero("period") ?: 0,
-          clock = statusObj?.strOrEmpty("displayClock").orEmpty(),
-          possessionEspnId = situation?.str("possession"),
-          inRedZone = situation?.str("isRedZone")?.toBooleanStrictOrNull() ?: false,
-          isLiveDown = down >= 1,
-          downDistanceText = situation?.strOrEmpty("downDistanceText").orEmpty(),
-          possessionText = situation?.strOrEmpty("possessionText").orEmpty(),
+          period = period,
+          clock = clock,
+          possessionEspnId = possessionEspnId,
+          inRedZone = rawInRedZone && fieldSituation == LiveFieldSituation.SCRIMMAGE_DRIVE,
+          isLiveDown = isLiveDown,
+          fieldSituation = fieldSituation,
+          downDistanceText = downDistanceText,
+          possessionText = possessionText,
           yardLine = situation?.intOrNull("yardLine"),
-          lastPlayText = situation?.obj("lastPlay")?.strOrEmpty("text").orEmpty(),
+          lastPlayText = lastPlayText,
           kickoffEpochMillis = parseIsoMillis(ev.str("date")),
           venue = venueName,
           broadcast = broadcasts

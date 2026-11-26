@@ -117,6 +117,13 @@ enum class GamePhase {
 }
 
 @Serializable
+enum class LiveFieldSituation {
+  SCRIMMAGE_DRIVE,
+  PAT_PENDING,
+  KICKOFF_PENDING
+}
+
+@Serializable
 data class NflSide(
   val espnId: String,
   val team: NflTeam,
@@ -144,6 +151,7 @@ data class NflGameState(
   val possessionEspnId: String? = null,
   val inRedZone: Boolean = false,
   val isLiveDown: Boolean = true,
+  val fieldSituation: LiveFieldSituation = LiveFieldSituation.SCRIMMAGE_DRIVE,
   val downDistanceText: String = "",
   val possessionText: String = "",
   val yardLine: Int? = null,
@@ -157,6 +165,9 @@ data class NflGameState(
 
   val possessionTeam: NflTeam?
     get() = sideByEspnId(possessionEspnId)?.team
+
+  val effectiveInRedZone: Boolean
+    get() = phase == GamePhase.LIVE && fieldSituation == LiveFieldSituation.SCRIMMAGE_DRIVE && inRedZone
 
   fun sideByEspnId(espnId: String?): NflSide? = when (espnId) {
     null -> null
@@ -173,12 +184,22 @@ data class NflGameState(
 
   /**
    * Approximate progress from own goal line (0f) to opponent end zone (1f)
-   * for the visual mini field-position bar.
+   * for the visual linear field-position bar.
+   * - `KICKOFF_PENDING`: places the ball on the kicking team's tee (own 35 by default, or own 20..50 if spotted)
+   *   instead of leaving it frozen inside the opponent's 15-yard Red Zone during commercial breaks.
+   * - `PAT_PENDING`: spots the ball at the 2-yard conversion marker (`0.98f`).
    */
   val fieldProgressFraction: Float?
     get() {
       if (phase != GamePhase.LIVE || possessionEspnId == null) return null
-      if (inRedZone) {
+      if (fieldSituation == LiveFieldSituation.KICKOFF_PENDING) {
+        val parsedOwnSpot = parseOwnSideKickoffSpotFraction()
+        return parsedOwnSpot ?: 0.35f
+      }
+      if (fieldSituation == LiveFieldSituation.PAT_PENDING) {
+        return 0.98f
+      }
+      if (effectiveInRedZone) {
         val yds = yardLine?.coerceIn(1, 20) ?: 12
         return ((100 - yds) / 100f).coerceIn(0.80f, 0.99f)
       }
@@ -194,6 +215,17 @@ data class NflGameState(
       return (yardsFromOwnGoal / 100f).coerceIn(0.02f, 0.99f)
     }
 
+  private fun parseOwnSideKickoffSpotFraction(): Float? {
+    val text = possessionText.trim()
+    if (text == "50") return 0.50f
+    val parts = text.split(" ")
+    if (parts.size != 2) return null
+    val sideTeam = NflTeam.fromEspn(parts[0])
+    val yd = parts[1].toIntOrNull() ?: return null
+    val possTeam = possessionTeam ?: return null
+    return if (sideTeam == possTeam && yd in 20..49) yd / 100f else null
+  }
+
   fun statusDisplay(formattedKickoff: String? = null): String = when (phase) {
     GamePhase.SCHEDULED -> formattedKickoff ?: "Scheduled"
     GamePhase.HALFTIME -> "Halftime"
@@ -202,6 +234,178 @@ data class NflGameState(
       val q = if (period > 4) "OT" else "Q$period"
       "$q $clock".trim()
     }
+  }
+}
+
+/**
+ * Resolves whether a live NFL game is in an active scrimmage drive (`1st..4th down`),
+ * awaiting a post-touchdown try (`PAT_PENDING`), or awaiting a kickoff across TV/official
+ * timeouts (`KICKOFF_PENDING`) so games never stay stuck in a false Red Zone state after scoring.
+ */
+object LiveFieldSituationResolver {
+  private val completedTryInSummaryRegex = Regex(
+    """\((?:[^)]*\b(?:kick|two-point|2-point|pass|run|rush|failed|no good|blocked)\b[^)]*)\)""",
+    RegexOption.IGNORE_CASE
+  )
+
+  fun classifyStateless(
+    phase: GamePhase,
+    isLiveDown: Boolean,
+    inRedZoneRaw: Boolean,
+    possessionTeam: NflTeam?,
+    downDistanceText: String,
+    possessionText: String,
+    lastPlayTypeText: String,
+    lastPlayText: String,
+    period: Int,
+    clock: String
+  ): LiveFieldSituation {
+    if (phase != GamePhase.LIVE || isLiveDown) {
+      return LiveFieldSituation.SCRIMMAGE_DRIVE
+    }
+    val downTxt = downDistanceText.trim().lowercase()
+    val typeTxt = lastPlayTypeText.trim().lowercase()
+    val playTxt = lastPlayText.trim().lowercase()
+
+    if (downTxt == "pat" || downTxt.contains("extra point") || downTxt.contains("two-point")) {
+      return LiveFieldSituation.PAT_PENDING
+    }
+
+    val isCompletedKickoff =
+      (typeTxt.contains("kickoff") && !typeTxt.contains("touchdown")) ||
+        ((playTxt.contains("kicks ") || playTxt.startsWith("kickoff")) && !playTxt.contains("touchdown"))
+    if (isCompletedKickoff) {
+      return LiveFieldSituation.SCRIMMAGE_DRIVE
+    }
+
+    if (downTxt.contains("kickoff")) {
+      return LiveFieldSituation.KICKOFF_PENDING
+    }
+
+    val effectivePlayTxt = playTxt.substringAfterLast("reversed.").trim()
+    val isTouchdownPlay =
+      typeTxt.contains("touchdown") ||
+        (effectivePlayTxt.contains("touchdown") && !effectivePlayTxt.contains("nullified"))
+
+    val isCompletedTryOrFgOrSafety =
+      typeTxt.contains("extra point") ||
+        typeTxt.contains("two-point") ||
+        typeTxt.contains("2-point") ||
+        typeTxt.contains("field goal good") ||
+        typeTxt.contains("safety") ||
+        effectivePlayTxt.contains("extra point") ||
+        effectivePlayTxt.contains("two-point") ||
+        effectivePlayTxt.contains("2-point") ||
+        effectivePlayTxt.contains("field goal is good") ||
+        effectivePlayTxt.contains(", safety") ||
+        (isTouchdownPlay && completedTryInSummaryRegex.containsMatchIn(lastPlayText))
+
+    if (isCompletedTryOrFgOrSafety) {
+      return LiveFieldSituation.KICKOFF_PENDING
+    }
+
+    if (isTouchdownPlay) {
+      return LiveFieldSituation.PAT_PENDING
+    }
+
+    // Start of half / overtime before opening kickoff
+    if (downTxt.isEmpty() && (period == 1 || period == 3 || period >= 5) && (clock == "15:00" || clock == "10:00")) {
+      return LiveFieldSituation.KICKOFF_PENDING
+    }
+
+    return LiveFieldSituation.SCRIMMAGE_DRIVE
+  }
+
+  /**
+   * Refines non-down (`!isLiveDown`) games using ESPN's play-by-play list so even if the app
+   * cold-starts mid-commercial break after `"Official Timeout"`, we look past the timeout row
+   * to see that the preceding play was a TD/XP/FG and switch cleanly into `KICKOFF_PENDING` / `PAT_PENDING`.
+   */
+  fun refineWithPlayHistory(game: NflGameState, plays: List<NflPlay>): NflGameState {
+    if (game.phase != GamePhase.LIVE || game.isLiveDown || plays.isEmpty()) return game
+    val lastAction = plays.lastOrNull { !isAdministrativeStoppage(it) } ?: return game
+    val rawLower = lastAction.rawPlayText.ifBlank { lastAction.text }.lowercase()
+    val summaryLower = lastAction.text.lowercase()
+
+    val isKickoffAlreadyHappened =
+      (rawLower.contains("kicks ") || rawLower.startsWith("kickoff")) &&
+        lastAction.kind != PlayKind.TOUCHDOWN
+    if (isKickoffAlreadyHappened) {
+      return if (game.fieldSituation == LiveFieldSituation.KICKOFF_PENDING) {
+        game.copy(fieldSituation = LiveFieldSituation.SCRIMMAGE_DRIVE)
+      } else {
+        game
+      }
+    }
+
+    val isPostScoreAwaitingKickoff =
+      lastAction.kind == PlayKind.FIELD_GOAL ||
+        lastAction.kind == PlayKind.SAFETY ||
+        rawLower.contains("extra point") ||
+        rawLower.contains("two-point") ||
+        rawLower.contains("2-point") ||
+        (lastAction.kind == PlayKind.TOUCHDOWN && completedTryInSummaryRegex.containsMatchIn(lastAction.text))
+
+    if (isPostScoreAwaitingKickoff) {
+      val kickingEspnId = inferKickingTeamEspnId(game, lastAction, plays) ?: game.possessionEspnId
+      return game.copy(
+        fieldSituation = LiveFieldSituation.KICKOFF_PENDING,
+        inRedZone = false,
+        possessionEspnId = kickingEspnId
+      )
+    }
+
+    if (lastAction.kind == PlayKind.TOUCHDOWN && !summaryLower.contains("nullified")) {
+      val scoringEspnId = inferKickingTeamEspnId(game, lastAction, plays) ?: game.possessionEspnId
+      return game.copy(
+        fieldSituation = LiveFieldSituation.PAT_PENDING,
+        inRedZone = false,
+        possessionEspnId = scoringEspnId
+      )
+    }
+
+    return game
+  }
+
+  private fun isAdministrativeStoppage(play: NflPlay): Boolean {
+    if (play.kind.isScoring || play.isTurnover) return false
+    val txt = play.rawPlayText.ifBlank { play.text }.trim().lowercase()
+    return txt.startsWith("timeout") ||
+      txt.contains("official timeout") ||
+      txt.contains("two-minute warning") ||
+      txt.startsWith("end quarter") ||
+      txt.startsWith("end of quarter") ||
+      txt.startsWith("end period") ||
+      txt.contains("injury timeout")
+  }
+
+  private fun inferKickingTeamEspnId(game: NflGameState, scoringPlay: NflPlay, plays: List<NflPlay>): String? {
+    val idx = plays.indexOfFirst { it.id == scoringPlay.id }
+    val prevAwayScore = if (idx > 0) plays[idx - 1].awayScore else 0
+    val prevHomeScore = if (idx > 0) plays[idx - 1].homeScore else 0
+    if (idx >= 0) {
+      val awayDelta = scoringPlay.awayScore - prevAwayScore
+      val homeDelta = scoringPlay.homeScore - prevHomeScore
+      if (awayDelta > 0 && homeDelta <= 0) {
+        return if (scoringPlay.kind == PlayKind.SAFETY) game.home.espnId else game.away.espnId
+      }
+      if (homeDelta > 0 && awayDelta <= 0) {
+        return if (scoringPlay.kind == PlayKind.SAFETY) game.away.espnId else game.home.espnId
+      }
+      if (awayDelta >= 6 || homeDelta >= 6) {
+        return if (awayDelta >= homeDelta) game.away.espnId else game.home.espnId
+      }
+    }
+    val offenseId = scoringPlay.offenseTeamId
+    if (offenseId != null) {
+      val invertOffense = scoringPlay.isTurnover || scoringPlay.kind == PlayKind.SAFETY
+      return if (!invertOffense) {
+        offenseId
+      } else {
+        if (offenseId == game.away.espnId) game.home.espnId else game.away.espnId
+      }
+    }
+    return game.possessionEspnId
   }
 }
 

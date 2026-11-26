@@ -127,6 +127,225 @@ data class ScoringBreakdownLine(
   val points: Double
 )
 
+enum class StatLineFamily(val badge: String, val displayLabel: String) {
+  PASSING("PASS", "Passing"),
+  RUSHING("RUSH", "Rushing"),
+  RECEIVING("REC", "Receiving"),
+  SCORING_2PT_TD("TD/2P", "TDs & 2-Pt"),
+  TURNOVER("TO", "Turnovers"),
+  KICKING("KICK", "Kicking"),
+  DEFENSE_IDP("DEF", "Defense/IDP"),
+  OTHER("STAT", "Other")
+}
+
+data class FormattedScoringLineItem(
+  val family: StatLineFamily,
+  val categoryLabel: String,
+  val quantityLabel: String,
+  val rateLabel: String,
+  val points: Double,
+  val signedPointsLabel: String,
+  val isNegative: Boolean,
+  val isTouchdownOrTwoPt: Boolean
+)
+
+data class PlayerScoringAudit(
+  val items: List<FormattedScoringLineItem>,
+  val rawSum: Double,
+  val officialScore: Double,
+  val hasRoundingOrBonusDelta: Boolean
+)
+
+/**
+ * Pure formatter and aggregator that transforms raw MFL `ScoringBreakdownLine` entries
+ * into structured, human-friendly box-score table rows (catches, yards, rushes, 2-pt conversions,
+ * TDs, fumbles, kicking, and IDP/Defense) and rolls them up to player & team totals.
+ */
+object ScoringBreakdownFormatter {
+
+  fun auditPlayer(playerScore: PlayerLiveScore, precision: Int = 2): PlayerScoringAudit {
+    val linePrecision = maxOf(2, precision.coerceIn(0, 4))
+    val items = playerScore.breakdowns
+      .filter { it.points != 0.0 || (it.count.toDoubleOrNull() ?: 0.0) != 0.0 }
+      .map { formatLine(it, precision = linePrecision) }
+    val rawSum = playerScore.breakdowns.sumOf { it.points }
+    val tolerance = if (precision >= 3) 0.0005 else 0.005
+    val hasDelta = items.isNotEmpty() && kotlin.math.abs(rawSum - playerScore.score) >= tolerance
+    return PlayerScoringAudit(
+      items = items,
+      rawSum = rawSum,
+      officialScore = playerScore.score,
+      hasRoundingOrBonusDelta = hasDelta
+    )
+  }
+
+  fun rollupByFamily(players: List<PlayerLiveScore>): List<Pair<StatLineFamily, Double>> {
+    val totals = LinkedHashMap<StatLineFamily, Double>()
+    for (p in players) {
+      for (line in p.breakdowns) {
+        if (line.points == 0.0) continue
+        val fam = classifyFamily(line.category, line.points)
+        totals[fam] = (totals[fam] ?: 0.0) + line.points
+      }
+    }
+    return StatLineFamily.entries.mapNotNull { fam ->
+      val sum = totals[fam] ?: return@mapNotNull null
+      if (kotlin.math.abs(sum) < 0.0005) null else fam to sum
+    }
+  }
+
+  fun formatLine(line: ScoringBreakdownLine, precision: Int = 2): FormattedScoringLineItem {
+    val linePrecision = maxOf(2, precision.coerceIn(0, 4))
+    val cat = line.category.trim()
+    val lower = cat.lowercase()
+    val isNeg = line.points < -0.0001
+    val isTdOr2Pt = Regex("""\btd(?:s)?\b""", RegexOption.IGNORE_CASE).containsMatchIn(cat) ||
+      lower.contains("touchdown") ||
+      lower.contains("2-pt") ||
+      lower.contains("2pt") ||
+      lower.contains("two-point")
+    val family = classifyFamily(cat, line.points)
+    val qtyLabel = formatQuantity(line.count.trim(), lower)
+    val rateLabel = formatImpliedRate(line.count.trim(), line.points, lower)
+    val signedPts = when {
+      line.points > 0.0001 -> "+%.${linePrecision}f".format(line.points)
+      line.points < -0.0001 -> "%.${linePrecision}f".format(line.points)
+      else -> "%.${linePrecision}f".format(0.0)
+    }
+    return FormattedScoringLineItem(
+      family = family,
+      categoryLabel = prettifyCategory(cat),
+      quantityLabel = qtyLabel,
+      rateLabel = rateLabel,
+      points = line.points,
+      signedPointsLabel = signedPts,
+      isNegative = isNeg,
+      isTouchdownOrTwoPt = isTdOr2Pt && !isNeg
+    )
+  }
+
+  fun classifyFamily(category: String, points: Double): StatLineFamily {
+    val lower = category.lowercase()
+    if (lower.contains("fumble") && !lower.contains("recover") && !lower.contains("force")) {
+      return StatLineFamily.TURNOVER
+    }
+    if ((lower.contains("interception") || lower.contains("pick")) && points < -0.0001) {
+      return StatLineFamily.TURNOVER
+    }
+    if (lower.contains("2-pt") || lower.contains("2pt") || lower.contains("two-point")) {
+      return StatLineFamily.SCORING_2PT_TD
+    }
+    if (
+      lower.contains("field goal") ||
+      lower.contains("extra point") ||
+      Regex("""\bpat(?:s)?\b""").containsMatchIn(lower)
+    ) {
+      return StatLineFamily.KICKING
+    }
+    if (
+      lower.contains("passes defended") ||
+      lower.contains("pass defense") ||
+      lower.contains("pass breakup") ||
+      lower.contains("points allowed") ||
+      lower.contains("yards allowed") ||
+      lower.contains("tackle") ||
+      lower.contains("assist") ||
+      lower.contains("defensive") ||
+      lower.contains("fumbles recovered") ||
+      lower.contains("forced fumble") ||
+      lower.contains("safety") ||
+      lower.contains("blocked") ||
+      (lower.contains("sack") && !lower.contains("sacked") && points >= -0.0001) ||
+      (lower.contains("interception") && points >= -0.0001)
+    ) {
+      return StatLineFamily.DEFENSE_IDP
+    }
+    if (
+      lower.contains("pass") ||
+      lower.contains("sacked") ||
+      lower.contains("completion") ||
+      lower.contains("incompletion") ||
+      (lower.contains("sack") && points < -0.0001)
+    ) {
+      return StatLineFamily.PASSING
+    }
+    if (lower.contains("rush") || lower.contains("carry") || lower.contains("carries")) {
+      return StatLineFamily.RUSHING
+    }
+    if (
+      lower.contains("receiv") ||
+      lower.contains("reception") ||
+      lower.contains("catch") ||
+      lower.contains("target")
+    ) {
+      return StatLineFamily.RECEIVING
+    }
+    if (Regex("""\btd(?:s)?\b""").containsMatchIn(lower) || lower.contains("touchdown")) {
+      return StatLineFamily.SCORING_2PT_TD
+    }
+    return StatLineFamily.OTHER
+  }
+
+  private fun prettifyCategory(raw: String): String {
+    return raw
+      .replace(Regex("\\bTDs\\b"), "TD")
+      .replace(Regex("\\b2-Pt\\b", RegexOption.IGNORE_CASE), "2-Pt")
+      .trim()
+  }
+
+  private fun formatQuantity(countStr: String, lowerCategory: String): String {
+    val num = countStr.toDoubleOrNull()
+    val cleanNum = if (num != null && kotlin.math.abs(num - kotlin.math.round(num)) < 0.0001) {
+      kotlin.math.round(num).toLong().toString()
+    } else {
+      countStr
+    }
+    val isSingular = cleanNum == "1" || cleanNum == "-1"
+    return when {
+      lowerCategory.contains("field goal") -> "$cleanNum FG"
+      lowerCategory.contains("extra point") || Regex("""\bpat(?:s)?\b""").containsMatchIn(lowerCategory) ->
+        "$cleanNum XP"
+      lowerCategory.contains("2-pt") || lowerCategory.contains("2pt") || lowerCategory.contains("two-point") ->
+        "$cleanNum 2-PT"
+      Regex("""\btd(?:s)?\b""").containsMatchIn(lowerCategory) || lowerCategory.contains("touchdown") ->
+        "$cleanNum TD"
+      lowerCategory.contains("fumble") ->
+        if (isSingular) "1 fum" else "$cleanNum fum"
+      lowerCategory.contains("interception") ->
+        "$cleanNum INT"
+      lowerCategory.contains("sack") ->
+        if (isSingular) "1 sack" else "$cleanNum sacks"
+      lowerCategory.contains("reception") || lowerCategory.contains("catch") ->
+        if (isSingular) "1 catch" else "$cleanNum catches"
+      lowerCategory == "rushes" || lowerCategory.contains("rushing attempt") || lowerCategory.contains("carries") ->
+        if (isSingular) "1 rush" else "$cleanNum rushes"
+      lowerCategory.contains("game") || lowerCategory.contains("bonus") ->
+        "$cleanNum bonus"
+      lowerCategory.contains("yard") -> "$cleanNum yds"
+      else -> cleanNum
+    }
+  }
+
+  private fun formatImpliedRate(countStr: String, points: Double, lowerCategory: String): String {
+    val qty = countStr.toDoubleOrNull() ?: return ""
+    if (kotlin.math.abs(qty) < 0.0001 || kotlin.math.abs(points) < 0.0001) return ""
+    val rate = points / qty
+    return when {
+      lowerCategory.contains("field goal") || lowerCategory.contains("extra point") -> "%+.2f ea".format(rate)
+      lowerCategory.contains("2-pt") || lowerCategory.contains("2pt") || lowerCategory.contains("two-point") ->
+        "%+.1f/2PT".format(rate)
+      Regex("""\btd(?:s)?\b""").containsMatchIn(lowerCategory) || lowerCategory.contains("touchdown") ->
+        "%+.1f/TD".format(rate)
+      lowerCategory.contains("reception") || lowerCategory.contains("catch") -> "%+.2f/rec".format(rate)
+      lowerCategory == "rushes" || lowerCategory.contains("rushing attempt") || lowerCategory.contains("carries") ->
+        "%+.2f/rush".format(rate)
+      lowerCategory.contains("game") || lowerCategory.contains("bonus") -> "%+.2f ea".format(rate)
+      lowerCategory.contains("yard") -> "%+.2f/yd".format(rate)
+      else -> "%+.2f ea".format(rate)
+    }
+  }
+}
+
 @Serializable
 data class PlayerLiveScore(
   val playerId: String,

@@ -88,6 +88,7 @@ import com.mflgameday.live.model.ExposureRole
 import com.mflgameday.live.model.FantasyPlayer
 import com.mflgameday.live.model.GameEventKind
 import com.mflgameday.live.model.GamePhase
+import com.mflgameday.live.model.LiveFieldSituation
 import com.mflgameday.live.model.NflGameState
 import com.mflgameday.live.model.NflTeam
 import com.mflgameday.live.model.PlayLogEntry
@@ -222,13 +223,16 @@ object PlayerAvatarRingPolicy {
         GamePhase.SCHEDULED -> PlayerAvatarRingStatus.SCHEDULED_UPCOMING
         GamePhase.HALFTIME -> PlayerAvatarRingStatus.GAME_LIVE
         GamePhase.LIVE -> {
+          if (game.fieldSituation == LiveFieldSituation.KICKOFF_PENDING) {
+            return PlayerAvatarRingStatus.GAME_LIVE
+          }
           val isDefense = player?.isDefensiveSide == true
           val myTeam = player?.team
           val possTeam = game.possessionTeam
           when {
-            !isDefense && myTeam != null && possTeam == myTeam && game.inRedZone ->
+            !isDefense && myTeam != null && possTeam == myTeam && game.effectiveInRedZone ->
               PlayerAvatarRingStatus.IN_RED_ZONE
-            isDefense && myTeam != null && possTeam != null && possTeam != myTeam && game.inRedZone ->
+            isDefense && myTeam != null && possTeam != null && possTeam != myTeam && game.effectiveInRedZone ->
               PlayerAvatarRingStatus.DEFENDING_RED_ZONE
             !isDefense && myTeam != null && possTeam == myTeam ->
               PlayerAvatarRingStatus.HAS_POSSESSION
@@ -741,6 +745,47 @@ fun RedZonePulseBadge(teamCode: String, modifier: Modifier = Modifier) {
   }
 }
 
+/**
+ * Post-score Special Teams pill (`AWAITING KICKOFF` / `PAT · 2-PT TRY`) shown across TV
+ * commercial breaks & official timeouts so scoring teams never stay stuck in a false Red Zone badge.
+ */
+@Composable
+fun SpecialTeamsStatusBadge(
+  situation: LiveFieldSituation,
+  teamCode: String,
+  modifier: Modifier = Modifier
+) {
+  val ext = LocalGameDayColors.current
+  val isPat = situation == LiveFieldSituation.PAT_PENDING
+  val badgeColor = if (isPat) ext.touchdownGold else ext.turfAccent
+  val prefix = if (teamCode.isNotBlank()) "$teamCode · " else ""
+  val text = if (isPat) "${prefix}PAT / 2-PT" else "${prefix}AWAITING KICKOFF"
+
+  Row(
+    modifier = modifier
+      .clip(CircleShape)
+      .background(badgeColor.copy(alpha = if (ext.isDark) 0.22f else 0.14f))
+      .border(1.dp, badgeColor.copy(alpha = 0.72f), CircleShape)
+      .padding(horizontal = 8.dp, vertical = 3.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(4.dp)
+  ) {
+    Icon(
+      imageVector = Icons.Default.SportsFootball,
+      contentDescription = text,
+      tint = badgeColor,
+      modifier = Modifier.size(11.dp)
+    )
+    Text(
+      text = text,
+      color = badgeColor,
+      fontSize = 10.sp,
+      fontWeight = FontWeight.ExtraBold,
+      letterSpacing = 0.4.sp
+    )
+  }
+}
+
 data class FieldDriveVisualState(
   val awayCode: String,
   val homeCode: String,
@@ -751,6 +796,7 @@ data class FieldDriveVisualState(
   val firstDownFractionFromLeft: Float?,
   val targetEndzoneOnRight: Boolean,
   val inRedZone: Boolean,
+  val fieldSituation: LiveFieldSituation,
   val downDistanceText: String,
   val possessionText: String
 )
@@ -769,19 +815,40 @@ object FieldDriveGeometry {
     }
 
     val downTxt = game.downDistanceText.trim()
-    val isGoalToGo = downTxt.contains("goal", ignoreCase = true)
-    val parsedToGain = distanceRegex.find(downTxt)?.groupValues?.getOrNull(1)?.toIntOrNull()
-    val firstDownFromLeft: Float? = when {
-      isGoalToGo -> if (awayHasBall) 1.0f else 0.0f
-      parsedToGain != null && parsedToGain in 1..99 -> {
-        val gainFrac = parsedToGain / 100f
-        if (awayHasBall) {
-          (ballFromLeft + gainFrac).coerceIn(0.0f, 1.0f)
-        } else {
-          (ballFromLeft - gainFrac).coerceIn(0.0f, 1.0f)
+    val firstDownFromLeft: Float? = if (game.fieldSituation != LiveFieldSituation.SCRIMMAGE_DRIVE) {
+      null
+    } else {
+      val isGoalToGo = downTxt.contains("goal", ignoreCase = true)
+      val parsedToGain = distanceRegex.find(downTxt)?.groupValues?.getOrNull(1)?.toIntOrNull()
+      when {
+        isGoalToGo -> if (awayHasBall) 1.0f else 0.0f
+        parsedToGain != null && parsedToGain in 1..99 -> {
+          val gainFrac = parsedToGain / 100f
+          if (awayHasBall) {
+            (ballFromLeft + gainFrac).coerceIn(0.0f, 1.0f)
+          } else {
+            (ballFromLeft - gainFrac).coerceIn(0.0f, 1.0f)
+          }
         }
+        else -> null
       }
-      else -> null
+    }
+
+    val kickingTeamCode = if (awayHasBall) game.away.team.code else game.home.team.code
+    val receivingTeamCode = if (awayHasBall) game.home.team.code else game.away.team.code
+    val resolvedSpotLabel = when (game.fieldSituation) {
+      LiveFieldSituation.KICKOFF_PENDING -> {
+        val teeYd = (progress * 100f).roundToInt().coerceIn(20, 50)
+        "Tee at $kickingTeamCode $teeYd"
+      }
+      LiveFieldSituation.PAT_PENDING -> "Try at $receivingTeamCode 2"
+      LiveFieldSituation.SCRIMMAGE_DRIVE -> game.possessionText.trim()
+    }
+
+    val resolvedHeaderLeft = when (game.fieldSituation) {
+      LiveFieldSituation.KICKOFF_PENDING -> "Awaiting Kickoff"
+      LiveFieldSituation.PAT_PENDING -> "PAT / 2-Pt Try Pending"
+      LiveFieldSituation.SCRIMMAGE_DRIVE -> downTxt.ifBlank { "Live Drive" }
     }
 
     return FieldDriveVisualState(
@@ -793,9 +860,10 @@ object FieldDriveGeometry {
       ballFractionFromLeft = ballFromLeft,
       firstDownFractionFromLeft = firstDownFromLeft,
       targetEndzoneOnRight = awayHasBall,
-      inRedZone = game.inRedZone,
-      downDistanceText = downTxt,
-      possessionText = game.possessionText.trim()
+      inRedZone = game.effectiveInRedZone,
+      fieldSituation = game.fieldSituation,
+      downDistanceText = resolvedHeaderLeft,
+      possessionText = resolvedSpotLabel
     )
   }
 }
@@ -804,7 +872,8 @@ object FieldDriveGeometry {
  * Edge-to-Edge "Google Pinned Pro" Linear Football Field (`Modifier.fillMaxWidth()`):
  * Renders Away (left) and Home (right) team-colored endzones, yellow goalposts, white goal lines,
  * 10-yard lines + hash marks, yard numbers (`10..50..10` on wide containers, `20·50·20` on compact),
- * glowing yellow 1st-Down line, crimson Red Zone 20-yard tint, and directional live football puck.
+ * glowing yellow 1st-Down line, crimson Red Zone 20-yard tint, directional live football puck,
+ * and post-score `KICKOFF_PENDING` tee + flight-arc visual across commercial breaks.
  */
 @Composable
 fun GooglePinnedLinearField(
@@ -814,9 +883,11 @@ fun GooglePinnedLinearField(
   modifier: Modifier = Modifier
 ) {
   val drive = remember(
+    game.id,
     game.phase,
     game.possessionEspnId,
     game.inRedZone,
+    game.fieldSituation,
     game.downDistanceText,
     game.possessionText,
     game.yardLine
@@ -828,7 +899,14 @@ fun GooglePinnedLinearField(
   val textMeasurer = rememberTextMeasurer()
   val gold = Color(0xFFFFD600)
   val turfBase = Color(0xFF0E3121)
-  val borderCol = if (drive.inRedZone) ext.redZoneAlert else ext.cardBorder.copy(alpha = 0.78f)
+  val isKickoff = drive.fieldSituation == LiveFieldSituation.KICKOFF_PENDING
+  val isPat = drive.fieldSituation == LiveFieldSituation.PAT_PENDING
+  val borderCol = when {
+    drive.inRedZone -> ext.redZoneAlert
+    isPat -> gold.copy(alpha = 0.82f)
+    isKickoff -> ext.turfAccent.copy(alpha = 0.78f)
+    else -> ext.cardBorder.copy(alpha = 0.78f)
+  }
   val directionCaption = if (drive.drivesLeftToRight) {
     "${drive.awayCode} ➔ ${drive.homeCode}"
   } else {
@@ -846,13 +924,22 @@ fun GooglePinnedLinearField(
           text = drive.downDistanceText.ifBlank { "Live Drive" },
           style = MaterialTheme.typography.labelSmall,
           fontWeight = FontWeight.Bold,
-          color = if (drive.inRedZone) ext.redZoneAlert else ext.turfAccent,
+          color = when {
+            drive.inRedZone -> ext.redZoneAlert
+            isPat -> gold
+            else -> ext.turfAccent
+          },
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
           modifier = Modifier.weight(1f)
         )
+        val rightCaption = when {
+          isKickoff || isPat -> "${drive.possessionText} · $directionCaption"
+          drive.possessionText.isNotBlank() -> "Ball on ${drive.possessionText} · $directionCaption"
+          else -> directionCaption
+        }
         Text(
-          text = if (drive.possessionText.isNotBlank()) "Ball on ${drive.possessionText} · $directionCaption" else directionCaption,
+          text = rightCaption,
           style = MaterialTheme.typography.labelSmall,
           fontFamily = FontFamily.Monospace,
           fontSize = 10.sp,
@@ -893,27 +980,40 @@ fun GooglePinnedLinearField(
       drawRect(color = Color(drive.awayColorHex).copy(alpha = 0.88f), topLeft = Offset.Zero, size = Size(ezW, h))
       drawRect(color = Color(drive.homeColorHex).copy(alpha = 0.88f), topLeft = Offset(w - ezW, 0f), size = Size(ezW, h))
 
-      // 2. Defending Red Zone 20-yard crimson tint + active drive progress wash
-      val rzStartX = if (drive.targetEndzoneOnRight) ezW + playW * 0.80f else ezW
-      drawRect(
-        color = ext.redZoneAlert.copy(alpha = if (drive.inRedZone) 0.30f else 0.10f),
-        topLeft = Offset(rzStartX, 0f),
-        size = Size(playW * 0.20f, h)
-      )
-
       val ballX = ezW + drive.ballFractionFromLeft * playW
-      val driveFillColor = if (drive.inRedZone) ext.redZoneAlert.copy(alpha = 0.16f) else ext.turfAccent.copy(alpha = 0.12f)
-      if (drive.drivesLeftToRight) {
+
+      // 2. Defending Red Zone 20-yard crimson tint + active drive progress wash (suppressed on Kickoffs!)
+      if (!isKickoff) {
+        val rzStartX = if (drive.targetEndzoneOnRight) ezW + playW * 0.80f else ezW
         drawRect(
-          color = driveFillColor,
-          topLeft = Offset(ezW, 0f),
-          size = Size((ballX - ezW).coerceAtLeast(2f), h)
+          color = ext.redZoneAlert.copy(alpha = if (drive.inRedZone) 0.30f else 0.09f),
+          topLeft = Offset(rzStartX, 0f),
+          size = Size(playW * 0.20f, h)
         )
+
+        if (!isPat) {
+          val driveFillColor = if (drive.inRedZone) ext.redZoneAlert.copy(alpha = 0.16f) else ext.turfAccent.copy(alpha = 0.12f)
+          if (drive.drivesLeftToRight) {
+            drawRect(
+              color = driveFillColor,
+              topLeft = Offset(ezW, 0f),
+              size = Size((ballX - ezW).coerceAtLeast(2f), h)
+            )
+          } else {
+            drawRect(
+              color = driveFillColor,
+              topLeft = Offset(ballX, 0f),
+              size = Size(((w - ezW) - ballX).coerceAtLeast(2f), h)
+            )
+          }
+        }
       } else {
+        // Receiving Dynamic Kickoff Landing Zone highlight (20-yard line to Goal Line)
+        val lzStartX = if (drive.targetEndzoneOnRight) ezW + playW * 0.80f else ezW
         drawRect(
-          color = driveFillColor,
-          topLeft = Offset(ballX, 0f),
-          size = Size(((w - ezW) - ballX).coerceAtLeast(2f), h)
+          color = ext.turfAccent.copy(alpha = 0.14f),
+          topLeft = Offset(lzStartX, 0f),
+          size = Size(playW * 0.20f, h)
         )
       }
 
@@ -980,7 +1080,7 @@ fun GooglePinnedLinearField(
         topLeft = Offset(w - ezW * 0.58f - homeLayout.size.width / 2f, (h - homeLayout.size.height) / 2f)
       )
 
-      // 6. Glowing Yellow 1st-Down Line
+      // 6. Glowing Yellow 1st-Down Line (only during active scrimmage drives)
       drive.firstDownFractionFromLeft?.let { fdFrac ->
         val fdX = ezW + fdFrac * playW
         drawLine(
@@ -992,36 +1092,90 @@ fun GooglePinnedLinearField(
         )
       }
 
-      // 7. Live Football Puck + Directional Drive Arrow
+      // 7. Live Football Puck / Kickoff Tee & Flight Arc
       val centerY = h * 0.45f
       val ballRx = 6.dp.toPx()
       val ballRy = 4.dp.toPx()
-      drawCircle(
-        color = (if (drive.inRedZone) ext.redZoneAlert else gold).copy(alpha = 0.34f),
-        radius = 10.dp.toPx(),
-        center = Offset(ballX, centerY)
-      )
-      val arrowPath = Path().apply {
-        if (drive.drivesLeftToRight) {
-          moveTo(ballX + ballRx + 2.dp.toPx(), centerY - 3.dp.toPx())
-          lineTo(ballX + ballRx + 7.dp.toPx(), centerY)
-          lineTo(ballX + ballRx + 2.dp.toPx(), centerY + 3.dp.toPx())
-        } else {
-          moveTo(ballX - ballRx - 2.dp.toPx(), centerY - 3.dp.toPx())
-          lineTo(ballX - ballRx - 7.dp.toPx(), centerY)
-          lineTo(ballX - ballRx - 2.dp.toPx(), centerY + 3.dp.toPx())
+
+      if (isKickoff) {
+        // Dashed Kickoff Flight Arc from 35-yard Tee to Receiving 12-yard Landing Zone
+        val targetFrac = if (drive.drivesLeftToRight) 0.88f else 0.12f
+        val targetX = ezW + targetFrac * playW
+        val midX = (ballX + targetX) / 2f
+        val arcPath = Path().apply {
+          moveTo(ballX, centerY)
+          quadraticTo(midX, h * 0.06f, targetX, centerY)
         }
-        close()
+        drawPath(
+          path = arcPath,
+          color = gold.copy(alpha = 0.88f),
+          style = androidx.compose.ui.graphics.drawscope.Stroke(
+            width = 1.8.dp.toPx(),
+            pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f)),
+            cap = StrokeCap.Round
+          )
+        )
+        // Receiving landing target ring + directional chevron
+        drawCircle(
+          color = ext.turfAccent.copy(alpha = 0.35f),
+          radius = 6.dp.toPx(),
+          center = Offset(targetX, centerY)
+        )
+        drawCircle(
+          color = gold,
+          radius = 2.6.dp.toPx(),
+          center = Offset(targetX, centerY)
+        )
+        // Orange/Gold Kickoff Tee Base under the ball
+        val teeHalfW = 5.dp.toPx()
+        val teeTopY = centerY + ballRy - 0.5.dp.toPx()
+        val teeBotY = centerY + ballRy + 3.2.dp.toPx()
+        val teePath = Path().apply {
+          moveTo(ballX - teeHalfW * 0.55f, teeTopY)
+          lineTo(ballX + teeHalfW * 0.55f, teeTopY)
+          lineTo(ballX + teeHalfW, teeBotY)
+          lineTo(ballX - teeHalfW, teeBotY)
+          close()
+        }
+        drawPath(teePath, color = Color(0xFFF97316))
+        drawCircle(
+          color = ext.turfAccent.copy(alpha = 0.30f),
+          radius = 10.dp.toPx(),
+          center = Offset(ballX, centerY)
+        )
+      } else {
+        drawCircle(
+          color = (if (drive.inRedZone) ext.redZoneAlert else gold).copy(alpha = 0.34f),
+          radius = 10.dp.toPx(),
+          center = Offset(ballX, centerY)
+        )
+        val arrowPath = Path().apply {
+          if (drive.drivesLeftToRight) {
+            moveTo(ballX + ballRx + 2.dp.toPx(), centerY - 3.dp.toPx())
+            lineTo(ballX + ballRx + 7.dp.toPx(), centerY)
+            lineTo(ballX + ballRx + 2.dp.toPx(), centerY + 3.dp.toPx())
+          } else {
+            moveTo(ballX - ballRx - 2.dp.toPx(), centerY - 3.dp.toPx())
+            lineTo(ballX - ballRx - 7.dp.toPx(), centerY)
+            lineTo(ballX - ballRx - 2.dp.toPx(), centerY + 3.dp.toPx())
+          }
+          close()
+        }
+        drawPath(arrowPath, color = gold)
       }
-      drawPath(arrowPath, color = gold)
+
       drawRoundRect(
-        color = if (drive.inRedZone) ext.redZoneAlert else Color(0xFFB45309),
+        color = when {
+          drive.inRedZone -> ext.redZoneAlert
+          isPat -> gold
+          else -> Color(0xFFB45309)
+        },
         topLeft = Offset(ballX - ballRx, centerY - ballRy),
         size = Size(ballRx * 2f, ballRy * 2f),
         cornerRadius = CornerRadius(ballRx, ballRy)
       )
       drawLine(
-        color = Color.White,
+        color = if (isPat) Color(0xFF1E293B) else Color.White,
         start = Offset(ballX - 2.2.dp.toPx(), centerY),
         end = Offset(ballX + 2.2.dp.toPx(), centerY),
         strokeWidth = 1.dp.toPx()
@@ -1039,10 +1193,13 @@ fun PlayerMicroDriveStrip(
   game: NflGameState,
   modifier: Modifier = Modifier
 ) {
+  if (game.fieldSituation == LiveFieldSituation.KICKOFF_PENDING) return
   val drive = remember(
+    game.id,
     game.phase,
     game.possessionEspnId,
     game.inRedZone,
+    game.fieldSituation,
     game.downDistanceText,
     game.possessionText,
     game.yardLine

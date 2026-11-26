@@ -25,7 +25,9 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-class MflRateLimitException : IOException("MyFantasyLeague rate limit reached (HTTP 429). Backing off 60s.")
+class MflRateLimitException(
+  message: String = "MyFantasyLeague rate limit reached (HTTP 429). Backing off 60s."
+) : IOException(message)
 class MflAuthException(message: String) : IOException(message)
 
 data class MflStatusInfo(
@@ -115,8 +117,9 @@ class MflApiClient(
 
   companion object {
     fun defaultOkHttpClient(): OkHttpClient = OkHttpClient.Builder()
-      .connectTimeout(15, TimeUnit.SECONDS)
-      .readTimeout(20, TimeUnit.SECONDS)
+      .connectTimeout(10, TimeUnit.SECONDS)
+      .readTimeout(12, TimeUnit.SECONDS)
+      .pingInterval(25, TimeUnit.SECONDS)
       .followRedirects(true)
       .followSslRedirects(true)
       .build()
@@ -637,7 +640,8 @@ class MflApiClient(
   ): T = throttleMutex.withLock {
     val now = System.currentTimeMillis()
     if (backoffUntilMs > now) {
-      delay(backoffUntilMs - now)
+      val remSec = ((backoffUntilMs - now) / 1000L).coerceAtLeast(1L)
+      throw MflRateLimitException("MFL rate-limited; cooling down ${remSec}s")
     }
     val nextAllowed = lastRequestAtMs + minRequestSpacingMs
     val current = System.currentTimeMillis()

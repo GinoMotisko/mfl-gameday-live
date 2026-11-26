@@ -692,4 +692,70 @@ class ServiceLifecyclePolicyTest {
     assertEquals(3 to 1, ServiceLifecyclePolicy.toEspnTargetSeasonTypeAndWeek(19))
     assertEquals(3 to 5, ServiceLifecyclePolicy.toEspnTargetSeasonTypeAndWeek(22))
   }
+
+  @Test
+  fun windowFocusAutoResume_andLocalPregameWakeAlarm_handleShadeOverlayAndSundayStandby() {
+    val now = 1_700_000_000_000L
+    val liveMode = GameDaySettings(
+      operatingMode = OperatingMode.MFL_AND_NFL_LIVE,
+      runInBackgroundService = true
+    )
+
+    // 1. Non-explicit pause (e.g. OS / shade overlay) auto-resumes when app window regains focus
+    assertTrue(
+      ServiceLifecyclePolicy.shouldAutoResumeOnWindowFocus(
+        settings = liveMode,
+        isBroadcastPaused = true,
+        pausedExplicitlyByUser = false,
+        isPollLoopActive = false
+      )
+    )
+    // 2. Explicit user Stop / Pause must NOT auto-resume merely on window focus change
+    assertFalse(
+      ServiceLifecyclePolicy.shouldAutoResumeOnWindowFocus(
+        settings = liveMode,
+        isBroadcastPaused = true,
+        pausedExplicitlyByUser = true,
+        isPollLoopActive = false
+      )
+    )
+
+    // 3. Sunday 9:00 AM with 1:00 PM ET kickoff (4h away) schedules local wakeup at 11:30 AM (kickoff - 90m)
+    val kickoffIn4Hours = now + 4L * 60L * 60_000L
+    val scheduledGames = listOf(
+      sampleGame("G_1PM", GamePhase.SCHEDULED, kickoffEpochMillis = kickoffIn4Hours)
+    )
+    assertEquals(
+      kickoffIn4Hours - ServiceLifecyclePolicy.PRE_KICKOFF_STANDBY_WINDOW_MS,
+      ServiceLifecyclePolicy.computeNextPregameWakeEpochMillis(
+        settings = liveMode,
+        isBroadcastPaused = false,
+        nflGames = scheduledGames,
+        nowMillis = now
+      )
+    )
+
+    // 4. Inside 90m window, paused, or Demo Simulator -> null (no redundant alarm)
+    val inside90m = listOf(
+      sampleGame("G_SOON", GamePhase.SCHEDULED, kickoffEpochMillis = now + 45L * 60_000L)
+    )
+    assertEquals(
+      null,
+      ServiceLifecyclePolicy.computeNextPregameWakeEpochMillis(
+        settings = liveMode,
+        isBroadcastPaused = false,
+        nflGames = inside90m,
+        nowMillis = now
+      )
+    )
+    assertEquals(
+      null,
+      ServiceLifecyclePolicy.computeNextPregameWakeEpochMillis(
+        settings = liveMode,
+        isBroadcastPaused = true,
+        nflGames = scheduledGames,
+        nowMillis = now
+      )
+    )
+  }
 }
