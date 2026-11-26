@@ -16,8 +16,9 @@ MFL-GameDay-Android-app/
 │       │   │   ├── MainActivity.kt      # Edge-to-edge Compose host, FLAG_KEEP_SCREEN_ON, notification permission flow
 │       │   │   ├── MflGameDayApp.kt     # Application entrypoint & GIF-capable Coil ImageLoader
 │       │   │   ├── audio/
-│       │   │   │   ├── GameDayVoiceEngine.kt         # Multi-voice Android TTS queue, personas & audio ducking
-│       │   │   │   └── StadiumSoundSynthesizer.kt    # Pure 16-bit PCM stadium brass/radar/whistle stingers
+│       │   │   │   ├── GameDayVoiceEngine.kt         # Multi-voice Android TTS queue, personas, default-voice reset & audio ducking
+│       │   │   │   ├── StadiumSoundSynthesizer.kt    # Pure 16-bit PCM stadium brass/radar/whistle stingers
+│       │   │   │   └── VoiceCastingResolver.kt       # Deterministic bipartite neural voice casting for 6 distinct commentators
 │       │   │   ├── data/
 │       │   │   │   ├── ClayPackManager.kt            # ETag conditional delta manifest sync & O(1) head URL resolver
 │       │   │   │   ├── EspnApiClient.kt              # Real-time NFL scoreboard, team logos, situation & play-by-play
@@ -43,17 +44,21 @@ MFL-GameDay-Android-app/
 │       │   │   │   ├── GameDayLiveService.kt         # Game-window Foreground Service, NotificationDismissReceiver & deduplicated shade controls
 │       │   │   │   └── ServiceLifecyclePolicy.kt     # Pure lifecycle policy (90m game-window gating, shade dedupe, Recents swipe-close & week rollover)
 │       │   │   └── ui/
-│       │   │       ├── GameDayAppShell.kt            # Responsive NavBar / NavRail / 3-Pane Command Center shell
+│       │   │       ├── GameDayAppShell.kt            # Responsive NavBar / NavRail / 3-Pane shell + Top Header Booth Pill
 │       │   │       ├── components/
-│       │   │       │   ├── BroadcastComponents.kt    # Decoupled 3D clay avatars, pulsing Red Zone rings & celebration banner
+│       │   │       │   ├── BroadcastComponents.kt    # 3D clay avatars, 5-state rings, GooglePinnedLinearField & celebration banner
 │       │   │       │   ├── ClayMascotResources.kt    # R8-safe 32 clay mascot & 6 clay base-layer drawable registry
-│       │   │       │   └── QuickTourDialog.kt        # 4-step interactive first-open wizard & anytime ? help guide
+│       │   │       │   └── QuickTourDialog.kt        # 4-step interactive first-open wizard with live commentator audition
 │       │   │       ├── screens/
-│       │   │       │   ├── FantasyMatchupsScreen.kt  # Multi-league split scoreboard, Best Ball & starter breakdowns
-│       │   │       │   ├── NflGamesScreen.kt         # Adaptive 1/2/3-col NFL grid, RedZone pulse, Game Center modal
+│       │   │       │   ├── FantasyMatchupsScreen.kt  # Multi-league split scoreboard, Best Ball, 5-state rings & micro-drive strip
+│       │   │       │   ├── NflGamesScreen.kt         # Adaptive 1/2/3-col NFL grid, GooglePinnedLinearField & Game Center modal
 │       │   │       │   ├── PlayFeedScreen.kt         # Filterable play-by-play log + one-tap speak & simulator
-│       │   │       │   ├── SettingsAndVoicesScreen.kt# Voice auditioner, 5 themes, event ticks, schedule refresh, OS readiness
-│       │   │       │   └── SetupAndAuthScreen.kt     # MFL Login, League ID lookup, Live-Only mode & Demo Simulator
+│       │   │       │   ├── SettingsAndVoicesScreen.kt# Multi-device adaptive 5-category Settings Hub (Phone / Foldable / Tablet)
+│       │   │       │   ├── SetupAndAuthScreen.kt     # Zero-BS elevator pitch hero, MFL Login, League ID lookup & Demo Simulator
+│       │   │       │   └── settings/
+│       │   │       │       ├── SettingsLeaguesLookAndHelpPanes.kt # Leagues, Look/Couch Mode & Help/Diagnostics panes
+│       │   │       │       ├── SettingsSharedComponents.kt        # Category cards, CommentatorStudioCard & QuickBoothBottomSheet
+│       │   │       │       └── SettingsVoiceAndPlaysPanes.kt      # 6-Commentator Announcer Studio & Broadcast Presets panes
 │       │   │       └── theme/
 │       │   │           ├── Color.kt
 │       │   │           ├── Theme.kt                  # 5 animated broadcast color palettes
@@ -65,7 +70,8 @@ MFL-GameDay-Android-app/
 │       │   ├── data/MflAndEspnPipelineIntegrationTest.kt # MockWebServer MFL + ESPN + HTML breakdown pipeline tests
 │       │   ├── diagnostics/DiagnosticsAndLogoTest.kt     # Secret redaction & 32-team NFL logo / headshot tests
 │       │   ├── engine/EventDifferAndSpeechTest.kt        # Pure unit tests for EventDiffer, Speech, Best Ball & Conflicts
-│       │   └── service/ServiceLifecyclePolicyTest.kt     # Home-background vs Recents swipe-close & projection pace tests
+│       │   ├── service/ServiceLifecyclePolicyTest.kt     # Home-background vs Recents swipe-close & projection pace tests
+│       │   └── ui/VoiceAndFieldVisualPolicyTest.kt       # Unit tests for 6-commentator casting, 5-state rings & linear field geometry
 │       └── androidTest/kotlin/com/mflgameday/live/
 │           └── ui/GameDayUiSmokeTest.kt              # Instrumented Compose smoke test
 ├── docs/

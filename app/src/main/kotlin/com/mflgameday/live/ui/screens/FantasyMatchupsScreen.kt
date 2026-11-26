@@ -75,8 +75,9 @@ import com.mflgameday.live.service.GameDayCoordinator
 import com.mflgameday.live.service.GameDayUiState
 import com.mflgameday.live.ui.components.AnimatedScoreText
 import com.mflgameday.live.ui.components.FranchiseCrestBadge
-import com.mflgameday.live.ui.components.PlayerAvatarRingStatus
+import com.mflgameday.live.ui.components.PlayerAvatarRingPolicy
 import com.mflgameday.live.ui.components.PlayerHeadshotAvatar
+import com.mflgameday.live.ui.components.PlayerMicroDriveStrip
 import com.mflgameday.live.ui.components.StadiumTurfCanvasBackdrop
 import com.mflgameday.live.ui.theme.LocalGameDayColors
 import kotlin.math.roundToInt
@@ -104,9 +105,17 @@ fun FantasyMatchupsScreen(
           verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
           Icon(Icons.Default.SportsFootball, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(42.dp))
-          Text("NFL Live Broadcast Mode Active", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
           Text(
-            text = "You're currently running standalone NFL Live Announcements without a fantasy team. Want to connect one or more MyFantasyLeague leagues?",
+            text = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) "Live Scores Broadcast Mode Active" else "NFL Live Broadcast Mode Active",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold
+          )
+          Text(
+            text = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) {
+              "You're currently running standalone Live Score Announcements without a fantasy team. Want to connect one or more MyFantasyLeague leagues?"
+            } else {
+              "You're currently running standalone NFL Live Announcements without a fantasy team. Want to connect one or more MyFantasyLeague leagues?"
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = ext.subtleText
           )
@@ -114,7 +123,7 @@ fun FantasyMatchupsScreen(
             Button(onClick = onNavigateToAddLeague) {
               Icon(Icons.Default.Add, contentDescription = null)
               Spacer(Modifier.width(6.dp))
-              Text("Connect MFL League")
+              Text(if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) "Connect Fantasy League" else "Connect MFL League")
             }
           }
         }
@@ -925,13 +934,11 @@ private fun PlayerScoreRow(
   val isDefendingField = player != null && game != null && game.phase == GamePhase.LIVE && isDefense && game.possessionTeam != null && game.possessionTeam != player.team
   val inGoalLineStand = isDefendingField && game != null && game.inRedZone
 
-  val ringStatus = when {
-    inRz -> PlayerAvatarRingStatus.IN_RED_ZONE
-    inGoalLineStand -> PlayerAvatarRingStatus.DEFENDING_RED_ZONE
-    hasBall -> PlayerAvatarRingStatus.HAS_POSSESSION
-    isMyTeam && playerScore.isStarter && ((game != null && game.phase == GamePhase.LIVE) || playerScore.isPlayingNow) -> PlayerAvatarRingStatus.MY_STARTER_LIVE
-    else -> PlayerAvatarRingStatus.IDLE
-  }
+  val ringStatus = PlayerAvatarRingPolicy.resolve(
+    player = player,
+    game = game,
+    gameSecondsRemaining = playerScore.gameSecondsRemaining
+  )
 
   Row(
     modifier = Modifier
@@ -1043,15 +1050,10 @@ private fun PlayerScoreRow(
         }
       }
 
-      if (settings.showGameMinutesProgress && playerScore.isPlayingNow) {
-        LinearProgressIndicator(
-          progress = { playerScore.gameProgressFraction },
-          modifier = Modifier
-            .fillMaxWidth(0.65f)
-            .height(3.dp)
-            .clip(CircleShape),
-          color = ext.turfAccent.copy(alpha = 0.8f),
-          trackColor = MaterialTheme.colorScheme.surfaceVariant
+      if (hasBall && game != null) {
+        PlayerMicroDriveStrip(
+          game = game,
+          modifier = Modifier.fillMaxWidth()
         )
       }
     }

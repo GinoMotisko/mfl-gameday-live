@@ -2,9 +2,12 @@ package com.mflgameday.live.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -43,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mflgameday.live.diagnostics.DiagnosticsLogger
+import com.mflgameday.live.model.VoicePersona
 import com.mflgameday.live.ui.theme.LocalGameDayColors
 
 private data class TourSlide(
@@ -52,51 +56,57 @@ private data class TourSlide(
   val icon: ImageVector
 )
 
+private val FEATURED_TOUR_PERSONAS = listOf(
+  VoicePersona.BOOTH_PLAY_BY_PLAY,
+  VoicePersona.REDZONE_SHOUTY,
+  VoicePersona.STUDIO_HOST,
+  VoicePersona.LONDON_CALLING
+)
+
 private val TOUR_SLIDES = listOf(
   TourSlide(
-    stepLabel = "STEP 1 OF 4 · SPOKEN CALL SCOPE",
-    title = "Control Which Games Are Announced Out Loud",
+    stepLabel = "STEP 1 OF 4 · WHAT GAMEDAY LIVE DOES",
+    title = "Your Hands-Free Big-Play & Fantasy Announcer",
     icon = Icons.AutoMirrored.Filled.VolumeUp,
     bullets = listOf(
-      "All NFL" to "Speaks scores, turnovers, sacks & Red Zone trips across every live game — ideal for Sunday man caves or NFL Live Only mode.",
-      "My Games" to "Limits spoken calls to NFL games involving starters in your active fantasy matchup.",
-      "My Players" to "Speaks only when a player in your lineup or facing you directly makes the play."
+      "Not Live Radio — Built for Multitasking" to "Watches active games and speaks touchdowns, turnovers, Red Zone trips & fantasy lead flips over your music in 3 seconds, even with your screen off.",
+      "Scope Filter (Top Booth Pill)" to "Tap the Booth Pill in the top bar anytime to switch between All Games, My Games, or My Players."
     )
   ),
   TourSlide(
-    stepLabel = "STEP 2 OF 4 · MATCHUPS, BEST BALL & CONFLICTS",
-    title = "Read Live Pace, Win % & Cross-League Rooting",
+    stepLabel = "STEP 2 OF 4 · MATCHUPS, FIELD & CONFLICTS",
+    title = "Live Field Drive Strip, Win % & Rooting Rings",
     icon = Icons.Default.SportsFootball,
     bullets = listOf(
-      "Win % & Pace Bar" to "Combines live points with remaining game-clock projections so you see projected final scores in real time.",
-      "Best Ball (BB)" to "Automatically marks your lowest counting starter as BUBBLE and active bench threats as CHASING.",
-      "MINE · OPP · CONFLICT ⚡" to "Tracking 2+ leagues? CONFLICT ⚡ flags players starting FOR you in one league and AGAINST you in another."
+      "Google-Style Linear Field & 5-State Rings" to "Live games render endzones, goalposts & ball position edge-to-edge. Player rings glow Gold with the ball, pulse Red inside the 20, and clear once Final.",
+      "Win %, Best Ball & CONFLICT ⚡" to "Tracks live remaining-clock projections, Best Ball BUBBLE / CHASING status, and flags players starting FOR you in League A and AGAINST you in League B."
     )
   ),
   TourSlide(
-    stepLabel = "STEP 3 OF 4 · VOICES, STINGERS & SCHEDULE",
-    title = "Pick Your Announcer Voice & Event Ticks",
+    stepLabel = "STEP 3 OF 4 · 6 COMMENTATORS & EVENT TICKS",
+    title = "Pick Your Commentator & What Gets Called",
     icon = Icons.Default.Tune,
     bullets = listOf(
-      "Voice Audition Studio" to "Open Settings to sample David, Shouty, Callie, or any installed Google / Samsung neural voice.",
-      "Granular Event Ticks" to "Toggle Touchdowns, Field Goals, Turnovers, Sacks, 25+ Yard Big Plays, Red Zone trips, and Lead Flips individually.",
-      "Schedule & Player Sync" to "Tap 'Refresh NFL Schedule' anytime to pull updated flex times and rosters."
+      "6 Distinct Commentators" to "Swap between David, Red Zone Rex, Callie, Nigel (UK), Macca (AU), and Coach Vance from the top Booth Pill or Settings -> Announcer & Voice.",
+      "One-Tap Broadcast Presets" to "Choose Sunday RedZone Party, Just My Matchup, or Big Scores Only — or toggle individual play types."
     )
   ),
   TourSlide(
-    stepLabel = "STEP 4 OF 4 · TABLET COUCH MODE & SUPPORT",
-    title = "All-Day Reliability & One-Tap Support",
+    stepLabel = "STEP 4 OF 4 · COUCH MODE & AUTO-STANDBY",
+    title = "Smart Game-Window Standby & Support",
     icon = Icons.Default.ScreenLockPortrait,
     bullets = listOf(
-      "Stadium Mode & Music Ducking" to "Keeps your tablet awake on the counter, runs with your phone screen off, and smoothly ducks Spotify for 3 seconds during play calls.",
-      "Replay Anytime" to "Missed a call? Tap any card in Plays / Live Ticker (or 'Replay' at the top) to hear it again.",
-      "Easy Support" to "Need help? Tap 'Email Support' in Settings to send a secret-redacted diagnostic log straight to support.gameday@motisko.com."
+      "Zero Off-Hours Notification Spam" to "Runs only during active game windows (starting 90m before kickoff) and sleeps automatically once games go Final — or swipe away the shade card anytime.",
+      "Music Ducking & Easy Support" to "Smoothly ducks Spotify for 3 seconds during spoken calls, and includes one-tap secret-redacted support logs in Settings."
     )
   )
 )
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun QuickTourDialog(
+  selectedPersona: VoicePersona,
+  onSelectAndSamplePersona: (VoicePersona) -> Unit,
   onSampleVoice: () -> Unit,
   onDismissAndComplete: () -> Unit
 ) {
@@ -184,6 +194,50 @@ fun QuickTourDialog(
           }
         }
 
+        if (slideIndex == 0) {
+          Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+              text = "TAP TO AUDITION YOUR COMMENTATOR NOW",
+              fontSize = 10.sp,
+              fontWeight = FontWeight.ExtraBold,
+              color = ext.subtleText
+            )
+            FlowRow(
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+              verticalArrangement = Arrangement.spacedBy(6.dp),
+              modifier = Modifier.fillMaxWidth()
+            ) {
+              FEATURED_TOUR_PERSONAS.forEach { persona ->
+                val isSelected = selectedPersona == persona
+                Surface(
+                  color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else ext.cardElevated,
+                  shape = RoundedCornerShape(10.dp),
+                  modifier = Modifier
+                    .border(
+                      width = if (isSelected) 1.6.dp else 1.dp,
+                      color = if (isSelected) MaterialTheme.colorScheme.primary else ext.cardBorder,
+                      shape = RoundedCornerShape(10.dp)
+                    )
+                    .clickable { onSelectAndSamplePersona(persona) }
+                ) {
+                  Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                  ) {
+                    Text(persona.flagEmoji, fontSize = 13.sp)
+                    Text(
+                      text = persona.shortName,
+                      style = MaterialTheme.typography.labelMedium,
+                      fontWeight = FontWeight.Bold
+                    )
+                  }
+                }
+              }
+            }
+          }
+        }
+
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -192,7 +246,7 @@ fun QuickTourDialog(
             FilledTonalButton(onClick = onSampleVoice) {
               Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(16.dp))
               Spacer(Modifier.width(6.dp))
-              Text("Test Spoken Call")
+              Text("Simulate Live Play")
             }
           }
           if (slideIndex == TOUR_SLIDES.lastIndex) {

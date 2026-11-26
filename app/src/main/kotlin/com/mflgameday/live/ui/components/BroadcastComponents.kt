@@ -60,17 +60,24 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -80,6 +87,8 @@ import com.mflgameday.live.BuildConfig
 import com.mflgameday.live.model.ExposureRole
 import com.mflgameday.live.model.FantasyPlayer
 import com.mflgameday.live.model.GameEventKind
+import com.mflgameday.live.model.GamePhase
+import com.mflgameday.live.model.NflGameState
 import com.mflgameday.live.model.NflTeam
 import com.mflgameday.live.model.PlayLogEntry
 import com.mflgameday.live.ui.theme.LocalGameDayColors
@@ -187,11 +196,53 @@ private fun TeamCodeMonogram(code: String, size: Dp) {
 }
 
 enum class PlayerAvatarRingStatus {
-  IDLE,
-  MY_STARTER_LIVE,
+  FINAL_DONE,
+  SCHEDULED_UPCOMING,
+  GAME_LIVE,
   HAS_POSSESSION,
   IN_RED_ZONE,
   DEFENDING_RED_ZONE
+}
+
+/**
+ * Pure 5-state (+ Goal-Line Defense) ring policy so every player avatar immediately communicates
+ * whether their game is done (`FINAL_DONE` -> zero ring), yet to kick off (`SCHEDULED_UPCOMING`),
+ * underway (`GAME_LIVE` -> solid team primary, avoiding yellow accent collisions), on offense
+ * (`HAS_POSSESSION` -> bright Championship Gold), or inside the 20 (`IN_RED_ZONE` -> pulsing Crimson).
+ */
+object PlayerAvatarRingPolicy {
+  fun resolve(
+    player: FantasyPlayer?,
+    game: NflGameState?,
+    gameSecondsRemaining: Int
+  ): PlayerAvatarRingStatus {
+    if (game != null) {
+      return when (game.phase) {
+        GamePhase.FINAL -> PlayerAvatarRingStatus.FINAL_DONE
+        GamePhase.SCHEDULED -> PlayerAvatarRingStatus.SCHEDULED_UPCOMING
+        GamePhase.HALFTIME -> PlayerAvatarRingStatus.GAME_LIVE
+        GamePhase.LIVE -> {
+          val isDefense = player?.isDefensiveSide == true
+          val myTeam = player?.team
+          val possTeam = game.possessionTeam
+          when {
+            !isDefense && myTeam != null && possTeam == myTeam && game.inRedZone ->
+              PlayerAvatarRingStatus.IN_RED_ZONE
+            isDefense && myTeam != null && possTeam != null && possTeam != myTeam && game.inRedZone ->
+              PlayerAvatarRingStatus.DEFENDING_RED_ZONE
+            !isDefense && myTeam != null && possTeam == myTeam ->
+              PlayerAvatarRingStatus.HAS_POSSESSION
+            else -> PlayerAvatarRingStatus.GAME_LIVE
+          }
+        }
+      }
+    }
+    return when {
+      gameSecondsRemaining <= 0 -> PlayerAvatarRingStatus.FINAL_DONE
+      gameSecondsRemaining < 3600 -> PlayerAvatarRingStatus.GAME_LIVE
+      else -> PlayerAvatarRingStatus.SCHEDULED_UPCOMING
+    }
+  }
 }
 
 /**
@@ -260,7 +311,7 @@ private fun ClayTrophyFallback() {
 fun PlayerHeadshotAvatar(
   player: FantasyPlayer?,
   size: Dp = 52.dp,
-  ringStatus: PlayerAvatarRingStatus = PlayerAvatarRingStatus.IDLE
+  ringStatus: PlayerAvatarRingStatus = PlayerAvatarRingStatus.SCHEDULED_UPCOMING
 ) {
   val ext = LocalGameDayColors.current
   val clayManifest = LocalClayManifest.current
@@ -280,9 +331,13 @@ fun PlayerHeadshotAvatar(
   }
 
   val rawHex = player?.team?.primaryColorHex ?: 0xFF1E293B
-  val accentHex = player?.team?.accentColorHex ?: 0xFF38BDF8
   val teamPrimary = Color(rawHex)
-  val teamAccent = Color(accentHex)
+  // Ensure dark team primaries (e.g. PIT 0xFF101820, LVR 0xFF111827) stay readable against dark cards without using yellow accents!
+  val liveTeamRingColor = when (rawHex) {
+    0xFF101820L, 0xFF111827L, 0xFF0B162AL, 0xFF03202FL -> Color(0xFF64748B)
+    else -> teamPrimary
+  }
+  val championshipGold = Color(0xFFFFD600)
   val jerseyTint = remember(rawHex) { ClayMascotResources.clayModulateTint(rawHex) }
   val helmetTint = remember(rawHex) { ClayMascotResources.clayHelmetTint(rawHex) }
 
@@ -307,55 +362,69 @@ fun PlayerHeadshotAvatar(
 
   val baseRingColor = when (ringStatus) {
     PlayerAvatarRingStatus.IN_RED_ZONE -> ext.redZoneAlert
-    PlayerAvatarRingStatus.DEFENDING_RED_ZONE -> ext.touchdownGold
-    PlayerAvatarRingStatus.HAS_POSSESSION -> ext.touchdownGold
-    PlayerAvatarRingStatus.MY_STARTER_LIVE -> ext.mineBadge
-    PlayerAvatarRingStatus.IDLE -> if (accentHex == 0xFF000000L) teamPrimary.copy(alpha = 0.80f) else teamAccent.copy(alpha = 0.72f)
+    PlayerAvatarRingStatus.DEFENDING_RED_ZONE -> ext.opponentBadge
+    PlayerAvatarRingStatus.HAS_POSSESSION -> championshipGold
+    PlayerAvatarRingStatus.GAME_LIVE -> liveTeamRingColor
+    PlayerAvatarRingStatus.SCHEDULED_UPCOMING -> ext.cardBorder.copy(alpha = 0.42f)
+    PlayerAvatarRingStatus.FINAL_DONE -> Color.Transparent
   }
 
   val ringWidth = when (ringStatus) {
-    PlayerAvatarRingStatus.IN_RED_ZONE -> (2.0f + 1.4f * pulseProgress).dp
-    PlayerAvatarRingStatus.DEFENDING_RED_ZONE -> (1.8f + 1.0f * pulseProgress).dp
-    PlayerAvatarRingStatus.HAS_POSSESSION -> 2.2.dp
-    PlayerAvatarRingStatus.MY_STARTER_LIVE -> 1.8.dp
-    PlayerAvatarRingStatus.IDLE -> 1.35.dp
+    PlayerAvatarRingStatus.IN_RED_ZONE -> (2.2f + 1.4f * pulseProgress).dp
+    PlayerAvatarRingStatus.DEFENDING_RED_ZONE -> (2.0f + 1.1f * pulseProgress).dp
+    PlayerAvatarRingStatus.HAS_POSSESSION -> 2.6.dp
+    PlayerAvatarRingStatus.GAME_LIVE -> 1.9.dp
+    PlayerAvatarRingStatus.SCHEDULED_UPCOMING -> 1.0.dp
+    PlayerAvatarRingStatus.FINAL_DONE -> 0.dp
   }
+
+  val avatarAlpha = if (ringStatus == PlayerAvatarRingStatus.FINAL_DONE) 0.76f else 1.0f
 
   Column(
     horizontalAlignment = Alignment.CenterHorizontally,
-    verticalArrangement = Arrangement.spacedBy(3.dp)
+    verticalArrangement = Arrangement.spacedBy(3.dp),
+    modifier = Modifier.alpha(avatarAlpha)
   ) {
     Box(
       modifier = Modifier.size(size + 4.dp),
       contentAlignment = Alignment.Center
     ) {
-      if (isPulsing) {
+      if (isPulsing || ringStatus == PlayerAvatarRingStatus.HAS_POSSESSION) {
+        val glowAlpha = if (isPulsing) pulseProgress * 0.62f else 0.34f
         Box(
           modifier = Modifier
             .fillMaxSize()
-            .alpha(pulseProgress * 0.60f)
+            .alpha(glowAlpha)
             .clip(CircleShape)
             .background(
               Brush.radialGradient(
-                listOf(baseRingColor.copy(alpha = 0.55f), Color.Transparent)
+                listOf(baseRingColor.copy(alpha = 0.60f), Color.Transparent)
               )
             )
         )
       }
 
-      Box(
-        modifier = Modifier
-          .size(size)
-          .clip(CircleShape)
-          .background(
-            Brush.verticalGradient(
-              listOf(
-                teamPrimary.copy(alpha = if (ext.isDark) 0.42f else 0.22f),
-                Color(0xFF0B131C).copy(alpha = if (ext.isDark) 0.88f else 0.14f)
-              )
+      val circleModifier = Modifier
+        .size(size)
+        .clip(CircleShape)
+        .background(
+          Brush.verticalGradient(
+            listOf(
+              teamPrimary.copy(alpha = if (ext.isDark) 0.42f else 0.22f),
+              Color(0xFF0B131C).copy(alpha = if (ext.isDark) 0.88f else 0.14f)
             )
           )
-          .border(ringWidth, baseRingColor.copy(alpha = pulseProgress), CircleShape),
+        )
+        .let { base ->
+          if (ringWidth > 0.dp) {
+            base.border(ringWidth, baseRingColor.copy(alpha = pulseProgress), CircleShape)
+          } else {
+            base
+          }
+        }
+
+      Box(
+        modifier = circleModifier,
         contentAlignment = Alignment.Center
       ) {
         when {
@@ -462,6 +531,18 @@ fun PlayerHeadshotAvatar(
       }
     }
 
+    val posAccent = when (ringStatus) {
+      PlayerAvatarRingStatus.IN_RED_ZONE -> ext.redZoneAlert
+      PlayerAvatarRingStatus.HAS_POSSESSION -> championshipGold
+      PlayerAvatarRingStatus.FINAL_DONE -> ext.subtleText
+      else -> MaterialTheme.colorScheme.primary
+    }
+    val posBorder = when (ringStatus) {
+      PlayerAvatarRingStatus.IN_RED_ZONE -> ext.redZoneAlert
+      PlayerAvatarRingStatus.HAS_POSSESSION -> championshipGold.copy(alpha = 0.85f)
+      else -> ext.cardBorder
+    }
+
     // Centered position capsule cleanly below the circle so 100% of the jersey # and face stay visible
     Box(
       modifier = Modifier
@@ -469,7 +550,7 @@ fun PlayerHeadshotAvatar(
         .background(MaterialTheme.colorScheme.surface)
         .border(
           width = 0.75.dp,
-          color = if (ringStatus == PlayerAvatarRingStatus.IN_RED_ZONE) ext.redZoneAlert else ext.cardBorder,
+          color = posBorder,
           shape = RoundedCornerShape(5.dp)
         )
         .padding(horizontal = 6.dp, vertical = 1.dp),
@@ -480,7 +561,7 @@ fun PlayerHeadshotAvatar(
         fontSize = 9.sp,
         fontWeight = FontWeight.Black,
         fontFamily = FontFamily.Monospace,
-        color = if (ringStatus == PlayerAvatarRingStatus.IN_RED_ZONE) ext.redZoneAlert else MaterialTheme.colorScheme.primary,
+        color = posAccent,
         maxLines = 1
       )
     }
@@ -660,39 +741,121 @@ fun RedZonePulseBadge(teamCode: String, modifier: Modifier = Modifier) {
   }
 }
 
+data class FieldDriveVisualState(
+  val awayCode: String,
+  val homeCode: String,
+  val awayColorHex: Long,
+  val homeColorHex: Long,
+  val drivesLeftToRight: Boolean,
+  val ballFractionFromLeft: Float,
+  val firstDownFractionFromLeft: Float?,
+  val targetEndzoneOnRight: Boolean,
+  val inRedZone: Boolean,
+  val downDistanceText: String,
+  val possessionText: String
+)
+
+object FieldDriveGeometry {
+  private val distanceRegex = Regex("""&\s*(\d+)""")
+
+  fun fromGame(game: NflGameState): FieldDriveVisualState? {
+    if (game.phase != GamePhase.LIVE || game.possessionEspnId == null) return null
+    val progress = game.fieldProgressFraction ?: return null
+    val awayHasBall = game.possessionEspnId == game.away.espnId
+    val ballFromLeft = if (awayHasBall) {
+      progress.coerceIn(0.01f, 0.99f)
+    } else {
+      (1f - progress).coerceIn(0.01f, 0.99f)
+    }
+
+    val downTxt = game.downDistanceText.trim()
+    val isGoalToGo = downTxt.contains("goal", ignoreCase = true)
+    val parsedToGain = distanceRegex.find(downTxt)?.groupValues?.getOrNull(1)?.toIntOrNull()
+    val firstDownFromLeft: Float? = when {
+      isGoalToGo -> if (awayHasBall) 1.0f else 0.0f
+      parsedToGain != null && parsedToGain in 1..99 -> {
+        val gainFrac = parsedToGain / 100f
+        if (awayHasBall) {
+          (ballFromLeft + gainFrac).coerceIn(0.0f, 1.0f)
+        } else {
+          (ballFromLeft - gainFrac).coerceIn(0.0f, 1.0f)
+        }
+      }
+      else -> null
+    }
+
+    return FieldDriveVisualState(
+      awayCode = game.away.team.code,
+      homeCode = game.home.team.code,
+      awayColorHex = game.away.team.primaryColorHex,
+      homeColorHex = game.home.team.primaryColorHex,
+      drivesLeftToRight = awayHasBall,
+      ballFractionFromLeft = ballFromLeft,
+      firstDownFractionFromLeft = firstDownFromLeft,
+      targetEndzoneOnRight = awayHasBall,
+      inRedZone = game.inRedZone,
+      downDistanceText = downTxt,
+      possessionText = game.possessionText.trim()
+    )
+  }
+}
+
 /**
- * Visual 100-yard mini field-position progress bar showing how close the offense is to scoring.
+ * Edge-to-Edge "Google Pinned Pro" Linear Football Field (`Modifier.fillMaxWidth()`):
+ * Renders Away (left) and Home (right) team-colored endzones, yellow goalposts, white goal lines,
+ * 10-yard lines + hash marks, yard numbers (`10..50..10` on wide containers, `20·50·20` on compact),
+ * glowing yellow 1st-Down line, crimson Red Zone 20-yard tint, and directional live football puck.
  */
 @Composable
-fun MiniFieldPositionBar(
-  progressFraction: Float,
-  inRedZone: Boolean,
-  downDistanceText: String,
-  possessionText: String,
+fun GooglePinnedLinearField(
+  game: NflGameState,
+  fieldHeight: Dp = 40.dp,
+  showHeaderLabels: Boolean = true,
   modifier: Modifier = Modifier
 ) {
-  val ext = LocalGameDayColors.current
-  val fillColor = if (inRedZone) ext.redZoneAlert else ext.turfAccent
+  val drive = remember(
+    game.phase,
+    game.possessionEspnId,
+    game.inRedZone,
+    game.downDistanceText,
+    game.possessionText,
+    game.yardLine
+  ) {
+    FieldDriveGeometry.fromGame(game)
+  } ?: return
 
-  Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-    Row(
-      modifier = Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.SpaceBetween,
-      verticalAlignment = Alignment.CenterVertically
-    ) {
-      Text(
-        text = downDistanceText.ifBlank { "Live Drive" },
-        style = MaterialTheme.typography.labelSmall,
-        fontWeight = FontWeight.SemiBold,
-        color = if (inRedZone) ext.redZoneAlert else ext.turfAccent,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis
-      )
-      if (possessionText.isNotBlank()) {
+  val ext = LocalGameDayColors.current
+  val textMeasurer = rememberTextMeasurer()
+  val gold = Color(0xFFFFD600)
+  val turfBase = Color(0xFF0E3121)
+  val borderCol = if (drive.inRedZone) ext.redZoneAlert else ext.cardBorder.copy(alpha = 0.78f)
+  val directionCaption = if (drive.drivesLeftToRight) {
+    "${drive.awayCode} ➔ ${drive.homeCode}"
+  } else {
+    "${drive.awayCode} ⬅ ${drive.homeCode}"
+  }
+
+  Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    if (showHeaderLabels) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
         Text(
-          text = "Ball on $possessionText",
+          text = drive.downDistanceText.ifBlank { "Live Drive" },
+          style = MaterialTheme.typography.labelSmall,
+          fontWeight = FontWeight.Bold,
+          color = if (drive.inRedZone) ext.redZoneAlert else ext.turfAccent,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.weight(1f)
+        )
+        Text(
+          text = if (drive.possessionText.isNotBlank()) "Ball on ${drive.possessionText} · $directionCaption" else directionCaption,
           style = MaterialTheme.typography.labelSmall,
           fontFamily = FontFamily.Monospace,
+          fontSize = 10.sp,
           color = ext.subtleText,
           maxLines = 1,
           softWrap = false
@@ -700,25 +863,249 @@ fun MiniFieldPositionBar(
       }
     }
 
-    Box(
+    val ezTextStyle = TextStyle(
+      color = Color.White.copy(alpha = 0.94f),
+      fontSize = 8.5.sp,
+      fontWeight = FontWeight.Black,
+      fontFamily = FontFamily.Monospace
+    )
+    val yardNumStyle = TextStyle(
+      color = Color.White.copy(alpha = 0.62f),
+      fontSize = 7.5.sp,
+      fontWeight = FontWeight.Bold,
+      fontFamily = FontFamily.Monospace
+    )
+
+    Canvas(
       modifier = Modifier
         .fillMaxWidth()
-        .height(6.dp)
-        .clip(CircleShape)
-        .background(MaterialTheme.colorScheme.surfaceVariant)
+        .height(fieldHeight)
+        .clip(RoundedCornerShape(8.dp))
+        .border(1.dp, borderCol, RoundedCornerShape(8.dp))
     ) {
-      Box(
-        modifier = Modifier
-          .fillMaxWidth(progressFraction.coerceIn(0.04f, 1f))
-          .fillMaxHeight()
-          .clip(CircleShape)
-          .background(
-            Brush.horizontalGradient(
-              listOf(ext.turfAccent.copy(alpha = 0.75f), fillColor)
-            )
+      val w = size.width
+      val h = size.height
+      val ezW = (w * 0.095f).coerceAtLeast(30.dp.toPx())
+      val playW = (w - ezW * 2f).coerceAtLeast(40f)
+
+      // 1. Turf base + Away (left) & Home (right) Endzones stretched 100% edge-to-edge
+      drawRect(color = turfBase, size = Size(w, h))
+      drawRect(color = Color(drive.awayColorHex).copy(alpha = 0.88f), topLeft = Offset.Zero, size = Size(ezW, h))
+      drawRect(color = Color(drive.homeColorHex).copy(alpha = 0.88f), topLeft = Offset(w - ezW, 0f), size = Size(ezW, h))
+
+      // 2. Defending Red Zone 20-yard crimson tint + active drive progress wash
+      val rzStartX = if (drive.targetEndzoneOnRight) ezW + playW * 0.80f else ezW
+      drawRect(
+        color = ext.redZoneAlert.copy(alpha = if (drive.inRedZone) 0.30f else 0.10f),
+        topLeft = Offset(rzStartX, 0f),
+        size = Size(playW * 0.20f, h)
+      )
+
+      val ballX = ezW + drive.ballFractionFromLeft * playW
+      val driveFillColor = if (drive.inRedZone) ext.redZoneAlert.copy(alpha = 0.16f) else ext.turfAccent.copy(alpha = 0.12f)
+      if (drive.drivesLeftToRight) {
+        drawRect(
+          color = driveFillColor,
+          topLeft = Offset(ezW, 0f),
+          size = Size((ballX - ezW).coerceAtLeast(2f), h)
+        )
+      } else {
+        drawRect(
+          color = driveFillColor,
+          topLeft = Offset(ballX, 0f),
+          size = Size(((w - ezW) - ballX).coerceAtLeast(2f), h)
+        )
+      }
+
+      // 3. Crisp white Goal Lines
+      drawLine(Color.White, Offset(ezW, 0f), Offset(ezW, h), strokeWidth = 1.8.dp.toPx())
+      drawLine(Color.White, Offset(w - ezW, 0f), Offset(w - ezW, h), strokeWidth = 1.8.dp.toPx())
+
+      // 4. Every 10-yard marker, hash ticks & responsive yard numbers
+      val showAllTens = w >= 380.dp.toPx()
+      for (i in 1..9) {
+        val lx = ezW + (i * 0.10f) * playW
+        val isMidfield = i == 5
+        drawLine(
+          color = Color.White.copy(alpha = if (isMidfield) 0.68f else 0.22f),
+          start = Offset(lx, 0f),
+          end = Offset(lx, h),
+          strokeWidth = if (isMidfield) 1.5.dp.toPx() else 0.9.dp.toPx()
+        )
+        drawLine(
+          color = Color.White.copy(alpha = 0.42f),
+          start = Offset(lx, h * 0.32f),
+          end = Offset(lx, h * 0.40f),
+          strokeWidth = 1.dp.toPx()
+        )
+        drawLine(
+          color = Color.White.copy(alpha = 0.42f),
+          start = Offset(lx, h * 0.60f),
+          end = Offset(lx, h * 0.68f),
+          strokeWidth = 1.dp.toPx()
+        )
+        if (showAllTens || i == 2 || i == 5 || i == 8) {
+          val numTxt = (if (i <= 5) i * 10 else (10 - i) * 10).toString()
+          val layout = textMeasurer.measure(numTxt, style = yardNumStyle)
+          drawText(
+            textLayoutResult = layout,
+            topLeft = Offset(lx - layout.size.width / 2f, h - layout.size.height - 1.5.dp.toPx())
           )
+        }
+      }
+
+      // 5. Endzone Team Codes & Yellow Goalposts on both outer edges
+      val gpStroke = 1.7.dp.toPx()
+      val gpInset = 4.dp.toPx()
+      val gpCross = 9.5.dp.toPx()
+      // Left goalpost
+      drawLine(gold, Offset(gpInset, h / 2f), Offset(gpCross, h / 2f), gpStroke, cap = StrokeCap.Round)
+      drawLine(gold, Offset(gpCross, h * 0.25f), Offset(gpCross, h * 0.75f), gpStroke, cap = StrokeCap.Round)
+      drawLine(gold, Offset(gpInset + 1.dp.toPx(), h * 0.25f), Offset(gpCross, h * 0.25f), gpStroke, cap = StrokeCap.Round)
+      drawLine(gold, Offset(gpInset + 1.dp.toPx(), h * 0.75f), Offset(gpCross, h * 0.75f), gpStroke, cap = StrokeCap.Round)
+      // Right goalpost
+      drawLine(gold, Offset(w - gpInset, h / 2f), Offset(w - gpCross, h / 2f), gpStroke, cap = StrokeCap.Round)
+      drawLine(gold, Offset(w - gpCross, h * 0.25f), Offset(w - gpCross, h * 0.75f), gpStroke, cap = StrokeCap.Round)
+      drawLine(gold, Offset(w - gpInset - 1.dp.toPx(), h * 0.25f), Offset(w - gpCross, h * 0.25f), gpStroke, cap = StrokeCap.Round)
+      drawLine(gold, Offset(w - gpInset - 1.dp.toPx(), h * 0.75f), Offset(w - gpCross, h * 0.75f), gpStroke, cap = StrokeCap.Round)
+
+      val awayLayout = textMeasurer.measure(drive.awayCode, style = ezTextStyle)
+      drawText(
+        textLayoutResult = awayLayout,
+        topLeft = Offset(ezW * 0.58f - awayLayout.size.width / 2f, (h - awayLayout.size.height) / 2f)
+      )
+      val homeLayout = textMeasurer.measure(drive.homeCode, style = ezTextStyle)
+      drawText(
+        textLayoutResult = homeLayout,
+        topLeft = Offset(w - ezW * 0.58f - homeLayout.size.width / 2f, (h - homeLayout.size.height) / 2f)
+      )
+
+      // 6. Glowing Yellow 1st-Down Line
+      drive.firstDownFractionFromLeft?.let { fdFrac ->
+        val fdX = ezW + fdFrac * playW
+        drawLine(
+          color = gold,
+          start = Offset(fdX, 0f),
+          end = Offset(fdX, h),
+          strokeWidth = 2.dp.toPx(),
+          pathEffect = if (drive.inRedZone) PathEffect.dashPathEffect(floatArrayOf(6f, 5f)) else null
+        )
+      }
+
+      // 7. Live Football Puck + Directional Drive Arrow
+      val centerY = h * 0.45f
+      val ballRx = 6.dp.toPx()
+      val ballRy = 4.dp.toPx()
+      drawCircle(
+        color = (if (drive.inRedZone) ext.redZoneAlert else gold).copy(alpha = 0.34f),
+        radius = 10.dp.toPx(),
+        center = Offset(ballX, centerY)
+      )
+      val arrowPath = Path().apply {
+        if (drive.drivesLeftToRight) {
+          moveTo(ballX + ballRx + 2.dp.toPx(), centerY - 3.dp.toPx())
+          lineTo(ballX + ballRx + 7.dp.toPx(), centerY)
+          lineTo(ballX + ballRx + 2.dp.toPx(), centerY + 3.dp.toPx())
+        } else {
+          moveTo(ballX - ballRx - 2.dp.toPx(), centerY - 3.dp.toPx())
+          lineTo(ballX - ballRx - 7.dp.toPx(), centerY)
+          lineTo(ballX - ballRx - 2.dp.toPx(), centerY + 3.dp.toPx())
+        }
+        close()
+      }
+      drawPath(arrowPath, color = gold)
+      drawRoundRect(
+        color = if (drive.inRedZone) ext.redZoneAlert else Color(0xFFB45309),
+        topLeft = Offset(ballX - ballRx, centerY - ballRy),
+        size = Size(ballRx * 2f, ballRy * 2f),
+        cornerRadius = CornerRadius(ballRx, ballRy)
+      )
+      drawLine(
+        color = Color.White,
+        start = Offset(ballX - 2.2.dp.toPx(), centerY),
+        end = Offset(ballX + 2.2.dp.toPx(), centerY),
+        strokeWidth = 1.dp.toPx()
       )
     }
+  }
+}
+
+/**
+ * Compact 14.dp Edge-to-Edge Micro-Field Strip (`Modifier.fillMaxWidth()`) shown directly beneath
+ * active ball-carrying starters (`hasBall == true`) in Fantasy Matchup rows across all resolutions.
+ */
+@Composable
+fun PlayerMicroDriveStrip(
+  game: NflGameState,
+  modifier: Modifier = Modifier
+) {
+  val drive = remember(
+    game.phase,
+    game.possessionEspnId,
+    game.inRedZone,
+    game.downDistanceText,
+    game.possessionText,
+    game.yardLine
+  ) {
+    FieldDriveGeometry.fromGame(game)
+  } ?: return
+
+  val ext = LocalGameDayColors.current
+  val gold = Color(0xFFFFD600)
+  val borderCol = if (drive.inRedZone) ext.redZoneAlert else ext.cardBorder.copy(alpha = 0.72f)
+
+  Canvas(
+    modifier = modifier
+      .fillMaxWidth()
+      .height(14.dp)
+      .clip(RoundedCornerShape(4.dp))
+      .border(0.9.dp, borderCol, RoundedCornerShape(4.dp))
+  ) {
+    val w = size.width
+    val h = size.height
+    val ezW = (w * 0.08f).coerceAtLeast(14.dp.toPx())
+    val playW = (w - ezW * 2f).coerceAtLeast(24f)
+
+    drawRect(color = Color(0xFF0E3121), size = Size(w, h))
+    drawRect(color = Color(drive.awayColorHex).copy(alpha = 0.85f), topLeft = Offset.Zero, size = Size(ezW, h))
+    drawRect(color = Color(drive.homeColorHex).copy(alpha = 0.85f), topLeft = Offset(w - ezW, 0f), size = Size(ezW, h))
+
+    val rzStartX = if (drive.targetEndzoneOnRight) ezW + playW * 0.80f else ezW
+    drawRect(
+      color = ext.redZoneAlert.copy(alpha = if (drive.inRedZone) 0.32f else 0.12f),
+      topLeft = Offset(rzStartX, 0f),
+      size = Size(playW * 0.20f, h)
+    )
+
+    drawLine(Color.White.copy(alpha = 0.85f), Offset(ezW, 0f), Offset(ezW, h), strokeWidth = 1.2.dp.toPx())
+    drawLine(Color.White.copy(alpha = 0.85f), Offset(w - ezW, 0f), Offset(w - ezW, h), strokeWidth = 1.2.dp.toPx())
+
+    for (i in 1..9) {
+      val lx = ezW + (i * 0.10f) * playW
+      drawLine(
+        color = Color.White.copy(alpha = if (i == 5) 0.62f else 0.18f),
+        start = Offset(lx, 0f),
+        end = Offset(lx, h),
+        strokeWidth = if (i == 5) 1.3.dp.toPx() else 0.8.dp.toPx()
+      )
+    }
+
+    drive.firstDownFractionFromLeft?.let { fd ->
+      val fdX = ezW + fd * playW
+      drawLine(gold, Offset(fdX, 0f), Offset(fdX, h), strokeWidth = 1.5.dp.toPx())
+    }
+
+    val ballX = ezW + drive.ballFractionFromLeft * playW
+    drawCircle(
+      color = Color.White,
+      radius = 4.5.dp.toPx(),
+      center = Offset(ballX, h / 2f)
+    )
+    drawCircle(
+      color = if (drive.inRedZone) ext.redZoneAlert else gold,
+      radius = 3.4.dp.toPx(),
+      center = Offset(ballX, h / 2f)
+    )
   }
 }
 
