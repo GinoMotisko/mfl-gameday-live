@@ -622,6 +622,9 @@ export function buildSetRolloutTrackUpdate({ track, existingReleases = [], versi
   if (!code) {
     throw new Error('Pass --version-code=<N> for set-rollout');
   }
+  if (rollout === undefined || rollout === true || String(rollout).trim() === '') {
+    throw new Error('Pass explicit --rollout=<0.01..1.0> for set-rollout');
+  }
   const checkedRollout = validateRolloutFraction(rollout);
   const target = existingReleases.find((r) => (r.versionCodes || []).map(String).includes(code));
   if (!target) {
@@ -668,9 +671,11 @@ async function cmdHaltRelease(flags) {
 async function cmdSetRollout(flags) {
   const track = String(flags.track || 'production');
   const versionCode = String(flags['version-code'] || '');
+  if (!versionCode || flags.rollout === undefined || flags.rollout === true || String(flags.rollout).trim() === '') {
+    throw new Error('Pass --version-code=<N> and explicit --rollout=<0.01..1.0> for set-rollout');
+  }
   const rollout = validateRolloutFraction(flags.rollout);
   const isDryRun = Boolean(flags['dry-run']);
-  if (!versionCode) throw new Error('Pass --version-code=<N> and --rollout=<0.01..1.0> for set-rollout');
 
   await enforceReviewQueueSafetyGate({
     isDryRun,
@@ -701,36 +706,35 @@ async function cmdSetRollout(flags) {
   console.log(JSON.stringify(outcome, null, 2));
 }
 
-async function cmdSmoke(flags) {
-  const expectedVersion = flags.version ? String(flags.version) : null;
-  const expectedVersionCode = flags['version-code'] ? String(flags['version-code']) : null;
-
-  const [{ accessToken }, publicStore, releaseApiResp, apkRedirectResp, storeHtmlResp] = await Promise.all([
-    mintGooglePlayAccessToken(),
-    checkPublicPlayStoreLive(),
-    fetch('https://www.motisko.com/api/gameday/release'),
-    fetch('https://www.motisko.com/gameday/apk', { redirect: 'manual' }),
-    fetch(`${PUBLIC_STORE_URL}&hl=en_US&gl=US`)
-  ]);
-
-  const prodTrack = await withPlayAppEdit(accessToken, { commit: false }, (editId) =>
-    playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/production`)
-  );
-  const releaseApi = await releaseApiResp.json();
-  const storeHtml = await storeHtmlResp.text();
-  const redirectLoc = apkRedirectResp.headers.get('location') || '';
-
-  const prodCodes = (prodTrack.releases || []).flatMap((r) => (r.versionCodes || []).map(String));
+export function evaluateSmokeGate({
+  publicStoreLive,
+  prodReleases = [],
+  expectedVersion,
+  expectedVersionCode,
+  expectedSha256,
+  releaseApi,
+  apkRedirectStatus,
+  apkRedirectLocation = '',
+  apkTargetHttpOk = true,
+  storeHtml = ''
+}) {
+  const activeReleases = prodReleases.filter((r) => r.status === 'completed' || r.status === 'inProgress');
+  const activeCodes = activeReleases.flatMap((r) => (r.versionCodes || []).map(String));
   const cleanVer = expectedVersion ? expectedVersion.replace(/^v/, '') : null;
+  const apiSha = typeof releaseApi?.sha256 === 'string' ? releaseApi.sha256.toLowerCase() : '';
+  const hasValidShaFormat = /^[a-f0-9]{64}$/.test(apiSha);
+  const shaMatchesExpected = expectedSha256 ? apiSha === expectedSha256.toLowerCase() : true;
 
   const checks = {
-    playPublicHttp200: publicStore.live,
-    playProductionTrackActive: expectedVersionCode ? prodCodes.includes(expectedVersionCode) : prodCodes.length > 0,
-    motiskoReleaseApiVersionMatch: expectedVersion ? releaseApi.version === expectedVersion : Boolean(releaseApi.version),
-    motiskoReleaseApiPlayLive: Boolean(releaseApi.playStoreLive),
+    playPublicHttp200: Boolean(publicStoreLive),
+    playProductionTrackActive: expectedVersionCode ? activeCodes.includes(String(expectedVersionCode)) : activeCodes.length > 0,
+    motiskoReleaseApiVersionMatch: expectedVersion ? releaseApi?.version === expectedVersion : Boolean(releaseApi?.version),
+    motiskoReleaseApiSha256Match: hasValidShaFormat && shaMatchesExpected,
+    motiskoReleaseApiPlayLive: Boolean(releaseApi?.playStoreLive),
     motiskoApkRedirectOk:
-      (apkRedirectResp.status === 307 || apkRedirectResp.status === 308) &&
-      redirectLoc.includes('releases/latest/download/MFL-GameDay-Live.apk'),
+      (apkRedirectStatus === 307 || apkRedirectStatus === 308) &&
+      apkRedirectLocation.includes('releases/latest/download/MFL-GameDay-Live.apk') &&
+      Boolean(apkTargetHttpOk),
     retailStorePropagatedToTargetVersion: cleanVer ? storeHtml.includes(cleanVer) : true
   };
 
@@ -738,21 +742,96 @@ async function cmdSmoke(flags) {
     checks.playPublicHttp200 &&
     checks.playProductionTrackActive &&
     checks.motiskoReleaseApiVersionMatch &&
+    checks.motiskoReleaseApiSha256Match &&
     checks.motiskoReleaseApiPlayLive &&
     checks.motiskoApkRedirectOk;
 
-  const result = {
+  return {
     verdict: !hardGatesOk
       ? 'FAIL'
       : checks.retailStorePropagatedToTargetVersion
         ? 'PASS_ALL_LIVE'
         : 'PASS_PENDING_GOOGLE_UPDATE_SCAN',
-    productionVersionCodes: prodCodes,
+    hardGatesOk,
+    productionReleases: prodReleases.map((r) => ({
+      name: r.name,
+      status: r.status,
+      versionCodes: r.versionCodes,
+      userFraction: r.userFraction
+    })),
+    activeProductionVersionCodes: activeCodes,
+    expectedSha256: expectedSha256 || null,
     motiskoReleaseApi: releaseApi,
     checks
   };
+}
+
+async function fetchPublishedGithubReleaseSha256(expectedVersion) {
+  const url = expectedVersion
+    ? `https://api.github.com/repos/GinoMotisko/mfl-gameday-live/releases/tags/${expectedVersion}`
+    : 'https://api.github.com/repos/GinoMotisko/mfl-gameday-live/releases/latest';
+  const res = await fetch(url, {
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'gameday-play-publish-smoke' }
+  });
+  if (!res.ok) {
+    throw new Error(`GitHub Release lookup failed (${res.status}) for ${url}`);
+  }
+  const rel = await res.json();
+  const shaAsset = (rel.assets || []).find((a) => typeof a?.name === 'string' && a.name.endsWith('.apk.sha256'));
+  if (!shaAsset?.browser_download_url) {
+    throw new Error(`Published GitHub Release ${rel.tag_name} is missing a .apk.sha256 asset`);
+  }
+  const shaRes = await fetch(shaAsset.browser_download_url, {
+    headers: { 'User-Agent': 'gameday-play-publish-smoke' }
+  });
+  if (!shaRes.ok) {
+    throw new Error(`Failed to fetch .apk.sha256 asset (${shaRes.status})`);
+  }
+  const match = (await shaRes.text()).trim().match(/^([a-f0-9]{64})\b/i);
+  if (!match) {
+    throw new Error(`Malformed SHA-256 content in ${shaAsset.name}`);
+  }
+  return match[1].toLowerCase();
+}
+
+async function cmdSmoke(flags) {
+  const expectedVersion = flags.version ? String(flags.version) : null;
+  const expectedVersionCode = flags['version-code'] ? String(flags['version-code']) : null;
+  const explicitSha = flags.sha256 ? String(flags.sha256).toLowerCase() : null;
+
+  const [{ accessToken }, publicStore, releaseApiResp, apkRedirectResp, storeHtmlResp, expectedSha256] =
+    await Promise.all([
+      mintGooglePlayAccessToken(),
+      checkPublicPlayStoreLive(),
+      fetch('https://www.motisko.com/api/gameday/release'),
+      fetch('https://www.motisko.com/gameday/apk', { redirect: 'manual' }),
+      fetch(`${PUBLIC_STORE_URL}&hl=en_US&gl=US`),
+      explicitSha ? Promise.resolve(explicitSha) : fetchPublishedGithubReleaseSha256(expectedVersion)
+    ]);
+
+  const prodTrack = await withPlayAppEdit(accessToken, { commit: false }, (editId) =>
+    playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/production`)
+  );
+  const releaseApi = await releaseApiResp.json();
+  const storeHtml = await storeHtmlResp.text();
+  const redirectLoc = apkRedirectResp.headers.get('location') || '';
+  const apkHeadResp = redirectLoc ? await fetch(redirectLoc, { method: 'HEAD', redirect: 'follow' }) : { ok: false };
+
+  const result = evaluateSmokeGate({
+    publicStoreLive: publicStore.live,
+    prodReleases: prodTrack.releases || [],
+    expectedVersion,
+    expectedVersionCode,
+    expectedSha256,
+    releaseApi,
+    apkRedirectStatus: apkRedirectResp.status,
+    apkRedirectLocation: redirectLoc,
+    apkTargetHttpOk: apkHeadResp.ok,
+    storeHtml
+  });
+
   console.log(JSON.stringify(result, null, 2));
-  if (!hardGatesOk) {
+  if (!result.hardGatesOk) {
     process.exitCode = 1;
   }
 }
