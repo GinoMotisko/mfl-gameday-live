@@ -47,6 +47,11 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
+        <receiver
+            android:name=".service.NotificationDismissReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
     </application>
 
 </manifest>

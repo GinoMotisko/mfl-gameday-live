@@ -39,9 +39,9 @@ MFL-GameDay-Android-app/
 │       │   │   │   ├── NflModels.kt                  # NflTeam (32 teams + colors), NflGameState, NflPlay, GameEvent
 │       │   │   │   └── SettingsModels.kt             # AppThemePreset (Auto Dark/Light + 5 themes), VoicePersona, GameDaySettings
 │       │   │   ├── service/
-│       │   │   │   ├── GameDayCoordinator.kt         # Application-scoped reactive polling & state orchestrator
-│       │   │   │   ├── GameDayLiveService.kt         # Uninterrupted background Foreground Service + swipe-close shutdown
-│       │   │   │   └── ServiceLifecyclePolicy.kt     # Pure lifecycle policy (Home background vs Recents swipe-close)
+│       │   │   │   ├── GameDayCoordinator.kt         # Application-scoped reactive polling, game-window auto-standby & state orchestrator
+│       │   │   │   ├── GameDayLiveService.kt         # Game-window Foreground Service, NotificationDismissReceiver & deduplicated shade controls
+│       │   │   │   └── ServiceLifecyclePolicy.kt     # Pure lifecycle policy (90m game-window gating, shade dedupe, Recents swipe-close & week rollover)
 │       │   │   └── ui/
 │       │   │       ├── GameDayAppShell.kt            # Responsive NavBar / NavRail / 3-Pane Command Center shell
 │       │   │       ├── components/

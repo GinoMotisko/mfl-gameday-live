@@ -31,6 +31,21 @@ class MainActivity : ComponentActivity() {
     (application as MflGameDayApp).coordinator.onAppForegrounded()
   }
 
+  override fun onStop() {
+    super.onStop()
+    if (!isChangingConfigurations) {
+      (application as MflGameDayApp).coordinator.onAppBackgrounded()
+    }
+  }
+
+  override fun onDestroy() {
+    (application as MflGameDayApp).coordinator.onMainActivityDestroyed(
+      isChangingConfigurations = isChangingConfigurations,
+      isFinishing = isFinishing
+    )
+    super.onDestroy()
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
