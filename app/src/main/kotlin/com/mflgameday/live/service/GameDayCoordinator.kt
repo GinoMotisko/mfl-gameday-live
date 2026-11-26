@@ -889,9 +889,10 @@ class GameDayCoordinator(
 
     val warnings = ArrayList<String>()
     val detectedEvents = ArrayList<GameEvent>()
+    val previousSeasonYear = _uiState.value.currentSeasonYear
     var week = _uiState.value.currentWeek
     var year = lastKnownMflStatus?.year?.takeIf { _uiState.value.settings.operatingMode == OperatingMode.MFL_AND_NFL_LIVE }
-      ?: _uiState.value.currentSeasonYear
+      ?: previousSeasonYear
 
     // 1. Poll ESPN live scoreboard + parallel game summaries for play-by-play
     var espnSucceeded = false
@@ -911,14 +912,16 @@ class GameDayCoordinator(
         mflStatus = lastKnownMflStatus,
         espnSeasonType = board.seasonType,
         espnWeekNumber = board.weekNumber,
-        previousGamesAllFinal = previousGamesAllFinal
+        previousGamesAllFinal = previousGamesAllFinal,
+        sameSeasonAsUi = resolvedYear == previousSeasonYear
       )
       if (resolvedWeek != week || resolvedYear != year) {
         applySeasonAndWeek(year = resolvedYear, week = resolvedWeek)
         year = resolvedYear
         week = resolvedWeek
       }
-      // Prevent NFL/MFL week split-brain across Preseason, Regular Season (1..18), and Postseason (19..22)
+      // Prevent NFL/MFL week split-brain across Preseason, Regular Season (1..18), and Postseason (19..22).
+      // Propagate failure if the targeted ESPN fetch fails so MFL's nfl_sched fallback supplies the matching week!
       if (
         _uiState.value.settings.operatingMode == OperatingMode.MFL_AND_NFL_LIVE &&
         (board.seasonType != null || board.weekNumber != null)
@@ -928,9 +931,7 @@ class GameDayCoordinator(
         val weekMismatch = board.weekNumber != null && board.weekNumber != targetEspnWeek &&
           !(week == 22 && board.seasonType == 3 && board.weekNumber in 4..5)
         if (seasonTypeMismatch || weekMismatch) {
-          board = nonCancellingCatching {
-            espnClient.fetchScoreboard(week = targetEspnWeek, seasonType = targetSeasonType)
-          }.getOrDefault(board)
+          board = espnClient.fetchScoreboard(week = targetEspnWeek, seasonType = targetSeasonType)
           if (!canEmitForCycle(cycleGen)) return
         }
       }
@@ -962,7 +963,8 @@ class GameDayCoordinator(
         mflStatus = lastKnownMflStatus,
         espnSeasonType = null,
         espnWeekNumber = null,
-        previousGamesAllFinal = previousGamesAllFinal
+        previousGamesAllFinal = previousGamesAllFinal,
+        sameSeasonAsUi = year == previousSeasonYear
       )
       if (fallbackWeek != week || year != _uiState.value.currentSeasonYear) {
         applySeasonAndWeek(year = year, week = fallbackWeek)

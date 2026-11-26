@@ -328,6 +328,33 @@ class ServiceLifecyclePolicyTest {
       )
     )
 
+    assertEquals(
+      "Must hold Week 12 even during a temporary ESPN outage within the same season",
+      12,
+      ServiceLifecyclePolicy.resolveEffectiveWeek(
+        operatingMode = OperatingMode.MFL_AND_NFL_LIVE,
+        currentUiWeek = 12,
+        mflStatus = laggingStatus,
+        espnSeasonType = null,
+        espnWeekNumber = null,
+        previousGamesAllFinal = false,
+        sameSeasonAsUi = true
+      )
+    )
+    assertEquals(
+      "Must allow new season year (2027 Week 1) to reset from prior season Week 22",
+      1,
+      ServiceLifecyclePolicy.resolveEffectiveWeek(
+        operatingMode = OperatingMode.MFL_AND_NFL_LIVE,
+        currentUiWeek = 22,
+        mflStatus = MflStatusInfo(2027, currentWeek = 1, liveScoringWeek = 1, upcomingWeek = 1, lineupWeek = 1, completedWeek = 0),
+        espnSeasonType = null,
+        espnWeekNumber = null,
+        previousGamesAllFinal = false,
+        sameSeasonAsUi = false
+      )
+    )
+
     // Case C: Monday Night Football still active/scheduled (previousGamesAllFinal == false, currentUiWeek == 11) -> stay on Week 11!
     assertEquals(
       11,

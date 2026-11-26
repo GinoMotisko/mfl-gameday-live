@@ -90,7 +90,8 @@ object ServiceLifecyclePolicy {
     mflStatus: MflStatusInfo?,
     espnSeasonType: Int?,
     espnWeekNumber: Int?,
-    previousGamesAllFinal: Boolean
+    previousGamesAllFinal: Boolean,
+    sameSeasonAsUi: Boolean = true
   ): Int {
     val normalizedEspnWeek = when {
       espnWeekNumber == null || espnWeekNumber <= 0 -> null
@@ -104,10 +105,14 @@ object ServiceLifecyclePolicy {
     }
 
     val baseWeek = (mflStatus?.effectiveActiveWeek ?: currentUiWeek).coerceIn(1, MflStatusInfo.MAX_MFL_NFL_WEEK)
+    // Preserve an already-advanced week within the same season if ESPN temporarily fails (`normalizedEspnWeek == null`)
+    if (normalizedEspnWeek == null && sameSeasonAsUi && currentUiWeek > baseWeek) {
+      return currentUiWeek.coerceIn(1, MflStatusInfo.MAX_MFL_NFL_WEEK)
+    }
     // Advance when all prior-week games are FINAL, and hold that advanced week on subsequent cycles
     // (`currentUiWeek >= normalizedEspnWeek`) once the new week's SCHEDULED games replace nflGames!
     val canAdvanceOrHoldEspn = previousGamesAllFinal ||
-      (normalizedEspnWeek != null && currentUiWeek >= normalizedEspnWeek)
+      (normalizedEspnWeek != null && sameSeasonAsUi && currentUiWeek >= normalizedEspnWeek)
     if (canAdvanceOrHoldEspn && normalizedEspnWeek != null && normalizedEspnWeek > baseWeek) {
       return normalizedEspnWeek
     }
