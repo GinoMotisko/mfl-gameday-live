@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 /**
- * Repeatable Studio Play Store Graphic & Screenshot Builder for GameDay Live (`com.motiskoventures.gameday`).
+ * Repeatable Studio Play Store & Multi-Form-Factor Graphic Builder for GameDay Live (`com.motiskoventures.gameday`).
  *
- * Enforces Google Play Console 2026 visual & technical rules:
- *  - 24-bit RGB PNG (`channels === 3`, `hasAlpha === false` via `.flatten()`) on ALL screenshots & feature graphic
+ * Enforces Google Play Console 2026 visual & technical rules + Zero OS Status-Bar Clutter:
+ *  - 24-bit RGB PNG (`channels === 3`, `hasAlpha === false` via two-pass `.flatten().removeAlpha()`) on ALL screenshots & feature graphic
  *  - 100% trademark-safe copy (two-word "Red Zone", zero "NFL"/"ESPN" claims, zero third-party logos)
- *  - Phone: 6 × 1080×1920 (9:16) with slim studio header + rounded titanium frame over real playStore UI
- *  - 7" Tablet / Foldable: 4 × 1920×1080 (16:9) with 136px studio bar + 87.4% native 2-pane UI
- *  - 10" Wide Tablet: 4 × 2560×1440 (16:9) with 176px studio bar + 87.8% native 3-pane Command Center UI
+ *  - Phone: 6 × 1080×1920 (9:16) with slim studio header + rounded titanium frame over inset-cropped playStore UI
+ *  - Foldable: 4 × (2048×2048 1:1, 2048×1536 4:3, 1200×1920 10:16) over inset-cropped hinge-safe & cover UI
+ *  - 7" Tablet: 4 × 1920×1080 (16:9) with 136px studio bar + native 2-pane UI
+ *  - 10" Wide Tablet: 4 × 2560×1440 (16:9) with 176px studio bar + native 3-pane Command Center UI
+ *  - Desktop / DeX / Chromebook: 2 × 2560×1440 (16:9) widescreen multi-column Broadcast Booth UI
  *  - Feature Graphic: 1024×500 (24-bit RGB)
  */
 
@@ -48,8 +50,10 @@ const outRoot = process.argv[3]
   : path.resolve(repoRoot, 'dist/play-store-kit');
 
 const phoneDir = path.join(outRoot, 'screenshots-phone');
+const foldableDir = path.join(outRoot, 'screenshots-foldable');
 const tab7Dir = path.join(outRoot, 'screenshots-tablet-7in');
 const tab10Dir = path.join(outRoot, 'screenshots-tablet-10in');
+const desktopDir = path.join(outRoot, 'screenshots-desktop');
 
 function cleanAndEnsureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
@@ -116,15 +120,15 @@ async function buildFeatureGraphic(destPath) {
     </g>
 
     <!-- Top studio pill -->
-    <rect x="58" y="54" width="314" height="34" rx="17" fill="#0F2937" stroke="#14B8A6" stroke-width="1.5"/>
+    <rect x="58" y="54" width="340" height="34" rx="17" fill="#0F2937" stroke="#14B8A6" stroke-width="1.5"/>
     <circle cx="80" cy="71" r="5.5" fill="#10B981"/>
-    <text x="95" y="76" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="800" letter-spacing="1.4" fill="#5EEAD4">LIVE SPOKEN AUDIO BOOTH</text>
+    <text x="95" y="76" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="800" letter-spacing="1.3" fill="#5EEAD4">6 LIVE NEURAL COMMENTATORS</text>
 
     <!-- Headline -->
     <text x="54" y="152" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="56" font-weight="900" fill="#F8FAFC">GameDay Live</text>
     <text x="54" y="206" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="23" font-weight="700" fill="#FBBF24">Hear Every Big Play. Rule Every League.</text>
-    <text x="54" y="252" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="17.5" font-weight="500" fill="#CBD5E1">Hands-free play-by-play, Red Zone alerts, Win %</text>
-    <text x="54" y="279" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="17.5" font-weight="500" fill="#CBD5E1">&amp; multi-league Best Ball — Phone, Fold &amp; Tablet.</text>
+    <text x="54" y="252" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="17.5" font-weight="500" fill="#CBD5E1">Spoken play-by-play, linear stadium fields, Win %</text>
+    <text x="54" y="279" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="17.5" font-weight="500" fill="#CBD5E1">&amp; multi-league Best Ball — Phone, Fold, Tablet &amp; Desktop.</text>
 
     <!-- Feature badges -->
     <rect x="58" y="312" width="176" height="32" rx="8" fill="#132640" stroke="#334155" stroke-width="1"/>
@@ -137,7 +141,7 @@ async function buildFeatureGraphic(destPath) {
     ${barSvg}
     <text x="274" y="404" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="15" font-weight="700" fill="#94A3B8">Auto-ducks music · Speaks in pocket</text>
 
-    <!-- Right-side stylized Live Broadcast Card (100% vector monograms) -->
+    <!-- Right-side stylized Live Broadcast Card -->
     <rect x="548" y="56" width="424" height="388" rx="26" fill="url(#cardBg)" stroke="#F59E0B" stroke-opacity="0.7" stroke-width="2"/>
 
     <!-- Touchdown Alert Ribbon inside card -->
@@ -175,27 +179,36 @@ async function buildFeatureGraphic(destPath) {
 
   await sharp(Buffer.from(svg))
     .flatten({ background: '#050B16' })
+    .removeAlpha()
     .png({ compressionLevel: 9 })
     .toFile(destPath);
 }
 
-async function buildPhoneCard({ rawFile, outFile, pill, headline, subline, accent, bgTop, bgBottom, lightMode = false }) {
-  const W = 1080;
-  const H = 1920;
-  const screenW = 820;
-  const screenH = 1548;
+async function buildPortraitOrCoverCard({
+  rawFile,
+  outFile,
+  W = 1080,
+  H = 1920,
+  pill,
+  headline,
+  subline,
+  accent,
+  bgTop,
+  bgBottom,
+  lightMode = false,
+}) {
+  const screenW = Math.round(W * 0.78);
+  const screenY = Math.round(H * 0.175);
+  const screenH = H - screenY - Math.round(H * 0.02);
   const screenX = Math.round((W - screenW) / 2);
-  const screenY = 336;
-  const radius = 40;
+  const radius = Math.round(W * 0.036);
 
-  // Exact 1080:2040 aspect ratio (820x1548) so 100% of top header + bottom navigation bar stay intact
   const resizedShot = await sharp(rawFile)
     .resize(screenW, screenH, { fit: 'fill' })
     .flatten({ background: lightMode ? '#F8FAFC' : '#050B16' })
     .png()
     .toBuffer();
 
-  // Apply rounded-corner mask to screenshot
   const maskSvg = Buffer.from(
     `<svg width="${screenW}" height="${screenH}" xmlns="http://www.w3.org/2000/svg">
       <rect x="0" y="0" width="${screenW}" height="${screenH}" rx="${radius}" ry="${radius}" fill="#FFFFFF"/>
@@ -205,9 +218,6 @@ async function buildPhoneCard({ rawFile, outFile, pill, headline, subline, accen
     .composite([{ input: maskSvg, blend: 'dest-in' }])
     .png()
     .toBuffer();
-
-  const textPrimary = '#F8FAFC';
-  const textSub = '#CBD5E1';
 
   const bgSvg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
     <defs>
@@ -224,12 +234,12 @@ async function buildPhoneCard({ rawFile, outFile, pill, headline, subline, accen
     <rect width="${W}" height="${H}" fill="url(#glow)"/>
 
     <!-- Studio Pill -->
-    <rect x="290" y="56" width="500" height="44" rx="22" fill="#0F172A" stroke="${accent}" stroke-width="2"/>
-    <text x="540" y="85" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="19" font-weight="800" letter-spacing="1.8" fill="${accent}">${escXml(pill)}</text>
+    <rect x="${Math.round((W - 520) / 2)}" y="56" width="520" height="44" rx="22" fill="#0F172A" stroke="${accent}" stroke-width="2"/>
+    <text x="${Math.round(W / 2)}" y="85" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="19" font-weight="800" letter-spacing="1.8" fill="${accent}">${escXml(pill)}</text>
 
     <!-- Headline & Subline -->
-    <text x="540" y="176" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="56" font-weight="900" fill="${textPrimary}">${escXml(headline)}</text>
-    <text x="540" y="236" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="28" font-weight="600" fill="${textSub}">${escXml(subline)}</text>
+    <text x="${Math.round(W / 2)}" y="176" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="54" font-weight="900" fill="#F8FAFC">${escXml(headline)}</text>
+    <text x="${Math.round(W / 2)}" y="236" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="27" font-weight="600" fill="#CBD5E1">${escXml(subline)}</text>
 
     <!-- Titanium Bezel Outer Frame -->
     <rect x="${screenX - 10}" y="${screenY - 10}" width="${screenW + 20}" height="${screenH + 20}" rx="${radius + 10}" fill="#1E293B" stroke="${accent}" stroke-opacity="0.65" stroke-width="3"/>
@@ -247,7 +257,19 @@ async function buildPhoneCard({ rawFile, outFile, pill, headline, subline, accen
     .toFile(outFile);
 }
 
-async function buildLandscapeTabletCard({ rawFile, outFile, width, height, barHeight, badge, headline, subline, accent, bgLeft, bgRight }) {
+async function buildWideOrFoldableCard({
+  rawFile,
+  outFile,
+  width,
+  height,
+  barHeight,
+  badge,
+  headline,
+  subline,
+  accent,
+  bgLeft,
+  bgRight,
+}) {
   const padX = Math.round(width * 0.022);
   const padBottom = Math.round(height * 0.018);
   const shotW = width - padX * 2;
@@ -270,10 +292,10 @@ async function buildLandscapeTabletCard({ rawFile, outFile, width, height, barHe
     .png()
     .toBuffer();
 
-  const titleSize = Math.round(barHeight * 0.34);
-  const subSize = Math.round(barHeight * 0.19);
+  const titleSize = Math.round(barHeight * 0.33);
+  const subSize = Math.round(barHeight * 0.185);
   const pillH = Math.round(barHeight * 0.36);
-  const pillW = Math.round(width * 0.23);
+  const pillW = Math.round(width * 0.24);
   const pillY = Math.round((barHeight - pillH) / 2);
 
   const bgSvg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
@@ -287,13 +309,13 @@ async function buildLandscapeTabletCard({ rawFile, outFile, width, height, barHe
 
     <!-- Left Pill Badge -->
     <rect x="${padX}" y="${pillY}" width="${pillW}" height="${pillH}" rx="${Math.round(pillH / 2)}" fill="#0F172A" stroke="${accent}" stroke-width="2"/>
-    <text x="${padX + Math.round(pillW / 2)}" y="${pillY + Math.round(pillH * 0.66)}" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="${Math.round(pillH * 0.38)}" font-weight="800" letter-spacing="1.5" fill="${accent}">${escXml(badge)}</text>
+    <text x="${padX + Math.round(pillW / 2)}" y="${pillY + Math.round(pillH * 0.66)}" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="${Math.round(pillH * 0.37)}" font-weight="800" letter-spacing="1.4" fill="${accent}">${escXml(badge)}</text>
 
     <!-- Center/Right Studio Copy -->
     <text x="${padX + pillW + 28}" y="${Math.round(barHeight * 0.48)}" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="${titleSize}" font-weight="900" fill="#F8FAFC">${escXml(headline)}</text>
     <text x="${padX + pillW + 28}" y="${Math.round(barHeight * 0.80)}" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="${subSize}" font-weight="600" fill="#CBD5E1">${escXml(subline)}</text>
 
-    <!-- Frame Border around 87%+ Native Tablet Screenshot -->
+    <!-- Frame Border around Inset-Cropped Native Screenshot -->
     <rect x="${padX - 4}" y="${barHeight - 4}" width="${shotW + 8}" height="${shotH + 8}" rx="${radius + 4}" fill="#1E293B" stroke="${accent}" stroke-opacity="0.6" stroke-width="2.5"/>
   </svg>`;
 
@@ -322,10 +344,12 @@ async function assertRgbAndSize(filePath, expectedW, expectedH) {
 }
 
 async function main() {
-  console.log(`Building Play Store 24-bit RGB Studio Assets from ${rawDir} -> ${outRoot}`);
+  console.log(`Building Play Store & Multi-Form-Factor 24-bit RGB Studio Assets from ${rawDir} -> ${outRoot}`);
   cleanAndEnsureDir(phoneDir);
+  cleanAndEnsureDir(foldableDir);
   cleanAndEnsureDir(tab7Dir);
   cleanAndEnsureDir(tab10Dir);
+  cleanAndEnsureDir(desktopDir);
 
   const featurePath = path.join(outRoot, 'feature-graphic-1024x500.png');
   await buildFeatureGraphic(featurePath);
@@ -337,7 +361,7 @@ async function main() {
       out: '01-phone-live-spoken-audio.png',
       pill: 'LIVE SPOKEN PLAY-BY-PLAY',
       headline: 'Hear Every Touchdown Live',
-      subline: 'Spoken scores, turnovers & Red Zone calls in your pocket',
+      subline: 'Linear stadium fields, spoken calls & Red Zone alerts',
       accent: '#FBBF24',
       bgTop: '#071124',
       bgBottom: '#0B1D36',
@@ -345,9 +369,9 @@ async function main() {
     {
       raw: 'p02_multi_league_ppr.png',
       out: '02-phone-multi-league-winprob.png',
-      pill: 'WIN % & LEAGUE PROJECTIONS',
+      pill: '5-STATE RINGS & WIN %',
       headline: 'Real-Time Win Probability',
-      subline: 'YOU vs OPP projected totals, PPR & doubleheader tracking',
+      subline: '5-state player rings, pace projections & PPR tracking',
       accent: '#14B8A6',
       bgTop: '#061824',
       bgBottom: '#082630',
@@ -365,9 +389,9 @@ async function main() {
     {
       raw: 'p04_voice_studio.png',
       out: '04-phone-voice-studio-personas.png',
-      pill: 'RED ZONE OCTANE THEME',
-      headline: 'Broadcast Voice Studio',
-      subline: '4 announcer personas · Smoothly ducks background music',
+      pill: '6 NEURAL COMMENTATORS',
+      headline: 'Announcer Voice Studio',
+      subline: 'David, Rex, Callie, Nigel, Macca & Coach Vance · Ducks music',
       accent: '#F87171',
       bgTop: '#1F090D',
       bgBottom: '#0E1322',
@@ -397,9 +421,11 @@ async function main() {
 
   for (const s of phoneSpecs) {
     const outFile = path.join(phoneDir, s.out);
-    await buildPhoneCard({
+    await buildPortraitOrCoverCard({
       rawFile: path.join(rawDir, s.raw),
       outFile,
+      W: 1080,
+      H: 1920,
       pill: s.pill,
       headline: s.headline,
       subline: s.subline,
@@ -411,13 +437,105 @@ async function main() {
     await assertRgbAndSize(outFile, 1080, 1920);
   }
 
+  // Foldable 4-Asset Matrix (1:1 2048x2048, 4:3 2048x1536, 10:16 1200x1920)
+  const foldableSpecs = [
+    {
+      kind: 'wide',
+      raw: 'f01_unfolded_1x1_oled.png',
+      out: '01-fold-unfolded-1x1-oled.png',
+      width: 2048,
+      height: 2048,
+      barHeight: 168,
+      badge: 'UNFOLDED 1:1 OLED',
+      headline: 'Hinge-Safe Master-Detail Split',
+      subline: '5-state clay player rings, live drive strip & instant league switcher',
+      accent: '#14B8A6',
+      bgLeft: '#020408',
+      bgRight: '#081C24',
+    },
+    {
+      kind: 'wide',
+      raw: 'f02_unfolded_4x3_live.png',
+      out: '02-fold-unfolded-4x3-live.png',
+      width: 2048,
+      height: 1536,
+      barHeight: 156,
+      badge: 'UNFOLDED 4:3 LIVE',
+      headline: 'Edge-to-Edge Linear Stadium Fields',
+      subline: 'Spoken touchdown banners, Red Zone shading & 1-tap Booth Pill',
+      accent: '#FBBF24',
+      bgLeft: '#061020',
+      bgRight: '#0E223D',
+    },
+    {
+      kind: 'portrait',
+      raw: 'f03_cover_10x16_winprob.png',
+      out: '03-fold-cover-10x16-winprob.png',
+      width: 1200,
+      height: 1920,
+      pill: 'FOLDABLE COVER 10:16',
+      headline: 'One-Handed Cover Scoreboard',
+      subline: 'Check Win % on the cover, unfold straight into full split view',
+      accent: '#34D399',
+      bgTop: '#061822',
+      bgBottom: '#0B1D34',
+    },
+    {
+      kind: 'wide',
+      raw: 'f04_unfolded_1x1_daylight_bestball.png',
+      out: '04-fold-unfolded-1x1-daylight-bestball.png',
+      width: 2048,
+      height: 2048,
+      barHeight: 168,
+      badge: 'DAYLIGHT 1:1 BEST BALL',
+      headline: 'Optimal Counting Lineup & Chasers',
+      subline: 'High-contrast Sunday Daylight palette across unfolded inner displays',
+      accent: '#38BDF8',
+      bgLeft: '#0B1E36',
+      bgRight: '#133152',
+    },
+  ];
+
+  for (const f of foldableSpecs) {
+    const outFile = path.join(foldableDir, f.out);
+    if (f.kind === 'portrait') {
+      await buildPortraitOrCoverCard({
+        rawFile: path.join(rawDir, f.raw),
+        outFile,
+        W: f.width,
+        H: f.height,
+        pill: f.pill,
+        headline: f.headline,
+        subline: f.subline,
+        accent: f.accent,
+        bgTop: f.bgTop,
+        bgBottom: f.bgBottom,
+      });
+    } else {
+      await buildWideOrFoldableCard({
+        rawFile: path.join(rawDir, f.raw),
+        outFile,
+        width: f.width,
+        height: f.height,
+        barHeight: f.barHeight,
+        badge: f.badge,
+        headline: f.headline,
+        subline: f.subline,
+        accent: f.accent,
+        bgLeft: f.bgLeft,
+        bgRight: f.bgRight,
+      });
+    }
+    await assertRgbAndSize(outFile, f.width, f.height);
+  }
+
   const tab7Specs = [
     {
       raw: 't7_01_live_scoreboard.png',
       out: '01-tab7-live-scoreboard-grid.png',
-      badge: 'FOLDABLE & 7" TABLET',
-      headline: 'Multi-Column Live Scoreboard & Spoken Alerts',
-      subline: 'Adaptive Navigation Rail + Red Zone field progress + instant voice replay',
+      badge: 'COMPACT 7"–8" TABLET',
+      headline: 'Multi-Column Scoreboard & Linear Stadium Fields',
+      subline: 'Adaptive Navigation Rail + Red Zone field progress + spoken alerts',
       accent: '#FBBF24',
       bgLeft: '#061020',
       bgRight: '#0E223D',
@@ -427,7 +545,7 @@ async function main() {
       out: '02-tab7-oled-fantasy-split.png',
       badge: 'TRUE-BLACK OLED SPLIT',
       headline: 'Master-Detail Matchup & Starter Breakdown',
-      subline: 'Pinned YOU vs OPP win probability alongside live per-player projections',
+      subline: 'Pinned YOU vs OPP win probability alongside 5-state player rings',
       accent: '#14B8A6',
       bgLeft: '#020408',
       bgRight: '#081C24',
@@ -437,7 +555,7 @@ async function main() {
       out: '03-tab7-daylight-bestball.png',
       badge: 'SUNDAY DAYLIGHT MODE',
       headline: 'Automated Best Ball Optimal Lineup Tracking',
-      subline: 'Real-time optimal 9 calculation with live bench chaser alerts',
+      subline: 'Real-time optimal counting slots with live bench chaser alerts',
       accent: '#38BDF8',
       bgLeft: '#0B1E36',
       bgRight: '#133152',
@@ -446,8 +564,8 @@ async function main() {
       raw: 't7_04_gold_voice_themes.png',
       out: '04-tab7-classic-gold-voices.png',
       badge: 'CLASSIC GAMEDAY GOLD',
-      headline: '5 Custom Broadcast Themes & Neural Voice Auditioner',
-      subline: 'Tailor announcer speed, pitch, stadium stingers & event triggers',
+      headline: 'Adaptive Broadcast Studio & 6 Neural Commentators',
+      subline: 'Audition David, Rex, Callie, Nigel, Macca & Coach Vance in one tap',
       accent: '#F59E0B',
       bgLeft: '#191206',
       bgRight: '#0D1726',
@@ -456,7 +574,7 @@ async function main() {
 
   for (const s of tab7Specs) {
     const outFile = path.join(tab7Dir, s.out);
-    await buildLandscapeTabletCard({
+    await buildWideOrFoldableCard({
       rawFile: path.join(rawDir, s.raw),
       outFile,
       width: 1920,
@@ -488,7 +606,7 @@ async function main() {
       out: '02-tab10-daylight-live-grid.png',
       badge: 'HIGH-CONTRAST DAYLIGHT',
       headline: 'Wide-Screen Live Games Grid + Real-Time Call Feed',
-      subline: 'Track every Red Zone drive on the left while spoken calls stream live on the right',
+      subline: 'Track every linear stadium drive on the left while spoken calls stream on the right',
       accent: '#38BDF8',
       bgLeft: '#0B1D34',
       bgRight: '#12314E',
@@ -498,7 +616,7 @@ async function main() {
       out: '03-tab10-oled-bestball-command.png',
       badge: 'CYBER GRIDIRON OLED',
       headline: 'Multi-League PPR & Best Ball Command Deck',
-      subline: 'Switch leagues in one tap with cross-league starter & conflict badges',
+      subline: 'Switch leagues in one tap with 5-state clay rings & conflict badges',
       accent: '#14B8A6',
       bgLeft: '#020408',
       bgRight: '#071B24',
@@ -507,8 +625,8 @@ async function main() {
       raw: 't10_04_voice_and_themes.png',
       out: '04-tab10-broadcast-voice-themes.png',
       badge: 'STUDIO CUSTOMIZATION',
-      headline: 'Full Control Over Voices, Themes & Background Audio',
-      subline: 'Auto-ducks music during calls and pauses cleanly when swiped closed',
+      headline: '5-Category Broadcast Hub & 2-Tap Cross-Device Sync',
+      subline: '6 commentators, 5 themes, music ducking & password-free setup cloning',
       accent: '#34D399',
       bgLeft: '#06181F',
       bgRight: '#0C1E33',
@@ -517,7 +635,7 @@ async function main() {
 
   for (const s of tab10Specs) {
     const outFile = path.join(tab10Dir, s.out);
-    await buildLandscapeTabletCard({
+    await buildWideOrFoldableCard({
       rawFile: path.join(rawDir, s.raw),
       outFile,
       width: 2560,
@@ -533,7 +651,48 @@ async function main() {
     await assertRgbAndSize(outFile, 2560, 1440);
   }
 
-  console.log('ALL 15 PLAY STORE GRAPHICS VERIFIED (24-BIT RGB, ZERO ALPHA, EXACT DIMENSIONS)!');
+  const desktopSpecs = [
+    {
+      raw: 'd01_desktop_command_center.png',
+      out: '01-desktop-widescreen-command-center.png',
+      badge: 'DESKTOP & SAMSUNG DEX',
+      headline: 'Full Widescreen Fantasy War Room',
+      subline: 'Side-by-side active starters, 5-state clay rings & pinned play feed on ChromeOS & DeX',
+      accent: '#14B8A6',
+      bgLeft: '#040C18',
+      bgRight: '#0A1E32',
+    },
+    {
+      raw: 'd02_desktop_live_stadium_grid.png',
+      out: '02-desktop-widescreen-live-stadium-grid.png',
+      badge: 'MULTI-GAME DESKTOP WALL',
+      headline: '5-Column Live Stadium Grid + Spoken Booth',
+      subline: 'Every active drive, Red Zone alert & fantasy conflict across your desktop monitor',
+      accent: '#FBBF24',
+      bgLeft: '#020408',
+      bgRight: '#0B192C',
+    },
+  ];
+
+  for (const s of desktopSpecs) {
+    const outFile = path.join(desktopDir, s.out);
+    await buildWideOrFoldableCard({
+      rawFile: path.join(rawDir, s.raw),
+      outFile,
+      width: 2560,
+      height: 1440,
+      barHeight: 176,
+      badge: s.badge,
+      headline: s.headline,
+      subline: s.subline,
+      accent: s.accent,
+      bgLeft: s.bgLeft,
+      bgRight: s.bgRight,
+    });
+    await assertRgbAndSize(outFile, 2560, 1440);
+  }
+
+  console.log('ALL 21 STUDIO GRAPHICS VERIFIED (24-BIT RGB, ZERO ALPHA, ZERO OS STATUS-BAR CLUTTER)!');
 }
 
 main().catch((err) => {
