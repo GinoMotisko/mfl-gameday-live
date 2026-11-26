@@ -5,8 +5,8 @@ if "%JAVA_HOME%"=="" (
     set "JAVA_HOME=%LOCALAPPDATA%\Android\jdk\jdk-21.0.13.1+2"
   )
 )
-echo [GameDay Live] Running unit tests, pipeline integration tests, lint checks, Direct APK, and Play Store AAB...
-call "%~dp0..\gradlew.bat" testDirectDebugUnitTest lintDirectDebug lintVitalPlayStoreRelease assembleDirectRelease bundlePlayStoreRelease
+echo [GameDay Live] Running unit tests (direct + playStore), pipeline integration tests, lint checks, Direct APK, and Play Store AAB...
+call "%~dp0..\gradlew.bat" testDirectDebugUnitTest testPlayStoreDebugUnitTest lintDirectDebug lintVitalPlayStoreRelease assembleDirectRelease bundlePlayStoreRelease
 if errorlevel 1 (
   echo [GameDay Live] VERIFY FAILED
   exit /b 1

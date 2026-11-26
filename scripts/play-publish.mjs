@@ -93,24 +93,81 @@ export function verifyPng24BitRgbBuffer(buf, label = 'image.png') {
 }
 
 /**
- * Cryptographically verifies an `.aab` bundle's signing certificate SHA-256 and embedded R8 mapping.
+ * Pure Node.js ZIP Central Directory entry reader (cross-platform on Windows, Linux, and macOS
+ * without relying on BSD `tar` vs GNU `tar`).
  */
-export function verifyAabBundleIntegrity(aabPath) {
+export function listZipEntries(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 22) {
+    throw new Error('Invalid ZIP/AAB buffer');
+  }
+  const minEocdOffset = Math.max(0, buf.length - 65557);
+  let eocdOffset = -1;
+  for (let i = buf.length - 22; i >= minEocdOffset; i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) {
+      eocdOffset = i;
+      break;
+    }
+  }
+  if (eocdOffset < 0) {
+    throw new Error('ZIP/AAB End of Central Directory (EOCD) signature not found');
+  }
+  const totalEntries = buf.readUInt16LE(eocdOffset + 10);
+  const cdOffset = buf.readUInt32LE(eocdOffset + 16);
+  const entries = [];
+  let pos = cdOffset;
+  for (let idx = 0; idx < totalEntries && pos + 46 <= buf.length; idx++) {
+    if (buf.readUInt32LE(pos) !== 0x02014b50) {
+      throw new Error(`Corrupt ZIP Central Directory header at offset ${pos}`);
+    }
+    const nameLen = buf.readUInt16LE(pos + 28);
+    const extraLen = buf.readUInt16LE(pos + 30);
+    const commentLen = buf.readUInt16LE(pos + 32);
+    entries.push(buf.subarray(pos + 46, pos + 46 + nameLen).toString('utf8'));
+    pos += 46 + nameLen + extraLen + commentLen;
+  }
+  return entries;
+}
+
+/**
+ * Verifies `.aab` size, ZIP structure, and embedded R8 `proguard.map` (works on unsigned keyless CI AABs too).
+ */
+export function verifyAabStructure(aabPath) {
   if (!fs.existsSync(aabPath)) {
     throw new Error(`AAB file not found: ${aabPath}`);
   }
-  const stat = fs.statSync(aabPath);
-  if (stat.size < 500_000) {
-    throw new Error(`AAB file suspiciously small (${stat.size} bytes): ${aabPath}`);
+  const buf = fs.readFileSync(aabPath);
+  if (buf.length < 500_000) {
+    throw new Error(`AAB file suspiciously small (${buf.length} bytes): ${aabPath}`);
   }
+  const entries = listZipEntries(buf);
+  if (!entries.includes('BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map')) {
+    throw new Error(`AAB is missing embedded R8 mapping (BUNDLE-METADATA/.../proguard.map): ${aabPath}`);
+  }
+  const hasNativeDebugSymbols = entries.some((e) =>
+    e.startsWith('BUNDLE-METADATA/com.android.tools.build.debugsymbols/')
+  );
+  const fileSha256 = crypto.createHash('sha256').update(buf).digest('hex');
+  return {
+    sizeBytes: buf.length,
+    aabSha256: fileSha256,
+    hasEmbeddedProguardMap: true,
+    hasNativeDebugSymbols
+  };
+}
 
-  // 1. Verify signing certificate SHA-256 via JDK keytool
+/**
+ * Cryptographically verifies an `.aab` bundle's signing certificate SHA-256 and embedded R8 mapping.
+ */
+export function verifyAabBundleIntegrity(aabPath) {
+  const struct = verifyAabStructure(aabPath);
+
+  // Verify signing certificate SHA-256 via JDK keytool
   const javaHome = process.env.JAVA_HOME || 'C:/Program Files/Android/Android Studio/jbr';
   const keytoolCandidates = [
     path.join(javaHome, 'bin', process.platform === 'win32' ? 'keytool.exe' : 'keytool'),
     'keytool'
   ];
-  let keytoolBin = keytoolCandidates.find((c) => c === 'keytool' || fs.existsSync(c)) || 'keytool';
+  const keytoolBin = keytoolCandidates.find((c) => c === 'keytool' || fs.existsSync(c)) || 'keytool';
   const certOut = execFileSync(keytoolBin, ['-printcert', '-jarfile', aabPath], {
     encoding: 'utf8',
     timeout: 30000
@@ -126,24 +183,12 @@ export function verifyAabBundleIntegrity(aabPath) {
     );
   }
 
-  // 2. Verify R8 obfuscation mapping and native debug symbols are bundled inside BUNDLE-METADATA
-  const tarEntries = execFileSync('tar', ['-tf', aabPath], {
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-    timeout: 20000
-  });
-  if (!tarEntries.includes('BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map')) {
-    throw new Error(`AAB is missing embedded R8 mapping (BUNDLE-METADATA/.../proguard.map): ${aabPath}`);
-  }
-  const hasNativeDebugSymbols = tarEntries.includes('BUNDLE-METADATA/com.android.tools.build.debugsymbols/');
-
-  const fileSha256 = crypto.createHash('sha256').update(fs.readFileSync(aabPath)).digest('hex');
   return {
-    sizeBytes: stat.size,
+    sizeBytes: struct.sizeBytes,
     certSha256: actualSha,
-    aabSha256: fileSha256,
-    hasEmbeddedProguardMap: true,
-    hasNativeDebugSymbols
+    aabSha256: struct.aabSha256,
+    hasEmbeddedProguardMap: struct.hasEmbeddedProguardMap,
+    hasNativeDebugSymbols: struct.hasNativeDebugSymbols
   };
 }
 
@@ -398,10 +443,7 @@ async function cmdUploadInternal(flags) {
   const aabPath = path.resolve(flags.aab || 'app/build/outputs/bundle/playStoreRelease/app-playStore-release.aab');
   const targetTrack = String(flags.track || 'internal');
   const isDryRun = Boolean(flags['dry-run']);
-  const rollout = flags.rollout !== undefined ? Number(flags.rollout) : 1.0;
-  if (Number.isNaN(rollout) || rollout <= 0 || rollout > 1) {
-    throw new Error(`Invalid --rollout=${flags.rollout}; must be in (0.0, 1.0]`);
-  }
+  const rollout = validateRolloutFraction(flags.rollout);
   const notes = String(flags.notes || 'Bug fixes, audio engine improvements, and UI polish.');
 
   const integrity = verifyAabBundleIntegrity(aabPath);
@@ -432,25 +474,17 @@ async function cmdUploadInternal(flags) {
             releases: []
           }))
         : { releases: [] };
-    const preservedCompleted =
-      rollout < 1.0
-        ? (existingTrack.releases || []).filter(
-            (r) => r.status === 'completed' && !(r.versionCodes || []).map(String).includes(versionCode)
-          )
-        : [];
-    const releasePayload = {
-      name: `${versionCode} (${flags['version-name'] || 'release'})`,
+    const trackPayload = buildTrackReleaseUpdate({
+      track: targetTrack,
+      existingReleases: existingTrack.releases || [],
       versionCodes: [versionCode],
-      status: rollout < 1.0 ? 'inProgress' : 'completed',
-      ...(rollout < 1.0 ? { userFraction: rollout } : {}),
-      releaseNotes: [{ language: 'en-US', text: notes }]
-    };
+      rollout,
+      releaseName: `${versionCode} (${flags['version-name'] || 'release'})`,
+      notesText: notes
+    });
     await playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/${targetTrack}`, {
       method: 'PUT',
-      body: {
-        track: targetTrack,
-        releases: [...preservedCompleted, releasePayload]
-      }
+      body: trackPayload
     });
     return {
       mode: isDryRun ? 'DRY_RUN_VALIDATED_AND_DISCARDED' : `COMMITTED_TO_${targetTrack.toUpperCase()}`,
@@ -466,10 +500,7 @@ async function cmdPromote(flags) {
   const fromTrack = String(flags.from || 'internal');
   const toTrack = String(flags.to || 'production');
   const isDryRun = Boolean(flags['dry-run']);
-  const rollout = flags.rollout !== undefined ? Number(flags.rollout) : 1.0;
-  if (Number.isNaN(rollout) || rollout <= 0 || rollout > 1) {
-    throw new Error(`Invalid --rollout=${flags.rollout}; must be in (0.0, 1.0]`);
-  }
+  const rollout = validateRolloutFraction(flags.rollout);
 
   await enforceReviewQueueSafetyGate({
     isDryRun,
@@ -488,42 +519,129 @@ async function cmdPromote(flags) {
     if (!latestRelease?.versionCodes?.length) {
       throw new Error(`No active versionCodes found on source track '${fromTrack}'`);
     }
-    const newCodes = new Set(latestRelease.versionCodes.map(String));
-    const releasePayload = {
+    const trackPayload = buildTrackReleaseUpdate({
+      track: toTrack,
+      existingReleases: dst.releases || [],
       versionCodes: latestRelease.versionCodes,
-      status: rollout < 1.0 ? 'inProgress' : 'completed',
-      ...(rollout < 1.0 ? { userFraction: rollout } : {}),
-      releaseNotes: flags.notes
-        ? [{ language: 'en-US', text: String(flags.notes) }]
-        : latestRelease.releaseNotes || []
-    };
-    // Preserve existing completed baseline release during partial staged rollouts so the remaining (1 - rollout) users still have a live build
-    const preservedCompleted = rollout < 1.0
-      ? (dst.releases || []).filter(
-          (r) => r.status === 'completed' && !(r.versionCodes || []).some((vc) => newCodes.has(String(vc)))
-        )
-      : [];
-    const nextReleases = [...preservedCompleted, releasePayload];
+      rollout,
+      notesText: flags.notes ? String(flags.notes) : undefined,
+      fallbackReleaseNotes: latestRelease.releaseNotes || []
+    });
     await playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/${toTrack}`, {
       method: 'PUT',
-      body: { track: toTrack, releases: nextReleases }
+      body: trackPayload
     });
     return {
       mode: isDryRun ? 'DRY_RUN_VALIDATED_AND_DISCARDED' : 'COMMITTED_PROMOTION',
       fromTrack,
       toTrack,
-      releases: nextReleases
+      releases: trackPayload.releases
     };
   });
 
   console.log(JSON.stringify(outcome, null, 2));
 }
 
+export function validateRolloutFraction(rawRollout) {
+  const rollout = rawRollout !== undefined ? Number(rawRollout) : 1.0;
+  if (Number.isNaN(rollout) || rollout <= 0 || rollout > 1) {
+    throw new Error(`Invalid --rollout=${rawRollout}; must be in (0.0, 1.0]`);
+  }
+  return rollout;
+}
+
+/**
+ * Pure builder for Google Play track releases (preserves active `completed` baseline during staged rollouts).
+ */
+export function buildTrackReleaseUpdate({
+  track,
+  existingReleases = [],
+  versionCodes,
+  rollout = 1.0,
+  releaseName,
+  notesText,
+  fallbackReleaseNotes = []
+}) {
+  const checkedRollout = validateRolloutFraction(rollout);
+  const normalizedCodes = versionCodes.map(String);
+  const newCodeSet = new Set(normalizedCodes);
+  const preservedCompleted =
+    checkedRollout < 1.0
+      ? existingReleases.filter(
+          (r) => r.status === 'completed' && !(r.versionCodes || []).some((vc) => newCodeSet.has(String(vc)))
+        )
+      : [];
+  const releasePayload = {
+    ...(releaseName ? { name: releaseName } : {}),
+    versionCodes: normalizedCodes,
+    status: checkedRollout < 1.0 ? 'inProgress' : 'completed',
+    ...(checkedRollout < 1.0 ? { userFraction: checkedRollout } : {}),
+    releaseNotes: notesText ? [{ language: 'en-US', text: String(notesText) }] : fallbackReleaseNotes
+  };
+  return {
+    track,
+    releases: [...preservedCompleted, releasePayload]
+  };
+}
+
+/**
+ * Pure builder for halting an active staged (`inProgress`) release.
+ * Google Play API v3 rejects `halted` transitions on 100% `completed` releases with HTTP 400.
+ */
+export function buildHaltTrackUpdate({ track, existingReleases = [], versionCode }) {
+  const code = String(versionCode || '');
+  if (!code) {
+    throw new Error('Pass --version-code=<N> to halt an active staged release');
+  }
+  let matched = false;
+  const updatedReleases = existingReleases.map((r) => {
+    if ((r.versionCodes || []).map(String).includes(code)) {
+      matched = true;
+      if (r.status === 'completed') {
+        throw new Error(
+          `Cannot API-halt versionCode ${code} on '${track}' because it is already 100% 'completed' (Google Play API v3 only halts staged 'inProgress' rollouts). Ship a forward-fix versionCode N+1, and use --rollout=0.20 on Sunday rollouts when you want instant API halt capability.`
+        );
+      }
+      const halted = { ...r, status: 'halted' };
+      delete halted.userFraction;
+      return halted;
+    }
+    return r;
+  });
+  if (!matched) {
+    throw new Error(`Version code ${code} not found on track '${track}'`);
+  }
+  return { track, releases: updatedReleases };
+}
+
+/**
+ * Pure builder for expanding or completing an existing staged (`inProgress` or `halted`) release in-place.
+ */
+export function buildSetRolloutTrackUpdate({ track, existingReleases = [], versionCode, rollout }) {
+  const code = String(versionCode || '');
+  if (!code) {
+    throw new Error('Pass --version-code=<N> for set-rollout');
+  }
+  const checkedRollout = validateRolloutFraction(rollout);
+  const target = existingReleases.find((r) => (r.versionCodes || []).map(String).includes(code));
+  if (!target) {
+    throw new Error(`Version code ${code} not found on track '${track}'`);
+  }
+  return buildTrackReleaseUpdate({
+    track,
+    existingReleases,
+    versionCodes: target.versionCodes,
+    rollout: checkedRollout,
+    releaseName: target.name,
+    fallbackReleaseNotes: target.releaseNotes || []
+  });
+}
+
 async function cmdHaltRelease(flags) {
   const track = String(flags.track || 'production');
   const versionCode = String(flags['version-code'] || '');
   const isDryRun = Boolean(flags['dry-run']);
-  if (!versionCode) throw new Error('Pass --version-code=<N> to halt an active staged or live release');
+  if (!versionCode) throw new Error('Pass --version-code=<N> to halt an active staged release');
 
   await enforceReviewQueueSafetyGate({
     isDryRun,
@@ -533,29 +651,110 @@ async function cmdHaltRelease(flags) {
   const { accessToken } = await mintGooglePlayAccessToken();
   const outcome = await withPlayAppEdit(accessToken, { validate: true, commit: !isDryRun }, async (editId) => {
     const existingTrack = await playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/${track}`);
-    let matched = false;
-    const updatedReleases = (existingTrack.releases || []).map((r) => {
-      if ((r.versionCodes || []).map(String).includes(versionCode)) {
-        matched = true;
-        const halted = { ...r, status: 'halted' };
-        delete halted.userFraction;
-        return halted;
-      }
-      return r;
+    const payload = buildHaltTrackUpdate({
+      track,
+      existingReleases: existingTrack.releases || [],
+      versionCode
     });
-    if (!matched) {
-      throw new Error(`Version code ${versionCode} not found on track '${track}'`);
-    }
     await playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/${track}`, {
       method: 'PUT',
-      body: {
-        track,
-        releases: updatedReleases
-      }
+      body: payload
     });
-    return { mode: isDryRun ? 'DRY_RUN_HALT' : 'RELEASE_HALTED', track, versionCode, releases: updatedReleases };
+    return { mode: isDryRun ? 'DRY_RUN_HALT' : 'RELEASE_HALTED', track, versionCode, releases: payload.releases };
   });
   console.log(JSON.stringify(outcome, null, 2));
+}
+
+async function cmdSetRollout(flags) {
+  const track = String(flags.track || 'production');
+  const versionCode = String(flags['version-code'] || '');
+  const rollout = validateRolloutFraction(flags.rollout);
+  const isDryRun = Boolean(flags['dry-run']);
+  if (!versionCode) throw new Error('Pass --version-code=<N> and --rollout=<0.01..1.0> for set-rollout');
+
+  await enforceReviewQueueSafetyGate({
+    isDryRun,
+    overrideInitialReviewLock: Boolean(flags['override-initial-review-lock'])
+  });
+
+  const { accessToken } = await mintGooglePlayAccessToken();
+  const outcome = await withPlayAppEdit(accessToken, { validate: true, commit: !isDryRun }, async (editId) => {
+    const existingTrack = await playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/${track}`);
+    const payload = buildSetRolloutTrackUpdate({
+      track,
+      existingReleases: existingTrack.releases || [],
+      versionCode,
+      rollout
+    });
+    await playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/${track}`, {
+      method: 'PUT',
+      body: payload
+    });
+    return {
+      mode: isDryRun ? 'DRY_RUN_VALIDATED_AND_DISCARDED' : 'ROLLOUT_UPDATED',
+      track,
+      versionCode,
+      rollout,
+      releases: payload.releases
+    };
+  });
+  console.log(JSON.stringify(outcome, null, 2));
+}
+
+async function cmdSmoke(flags) {
+  const expectedVersion = flags.version ? String(flags.version) : null;
+  const expectedVersionCode = flags['version-code'] ? String(flags['version-code']) : null;
+
+  const [{ accessToken }, publicStore, releaseApiResp, apkRedirectResp, storeHtmlResp] = await Promise.all([
+    mintGooglePlayAccessToken(),
+    checkPublicPlayStoreLive(),
+    fetch('https://www.motisko.com/api/gameday/release'),
+    fetch('https://www.motisko.com/gameday/apk', { redirect: 'manual' }),
+    fetch(`${PUBLIC_STORE_URL}&hl=en_US&gl=US`)
+  ]);
+
+  const prodTrack = await withPlayAppEdit(accessToken, { commit: false }, (editId) =>
+    playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/production`)
+  );
+  const releaseApi = await releaseApiResp.json();
+  const storeHtml = await storeHtmlResp.text();
+  const redirectLoc = apkRedirectResp.headers.get('location') || '';
+
+  const prodCodes = (prodTrack.releases || []).flatMap((r) => (r.versionCodes || []).map(String));
+  const cleanVer = expectedVersion ? expectedVersion.replace(/^v/, '') : null;
+
+  const checks = {
+    playPublicHttp200: publicStore.live,
+    playProductionTrackActive: expectedVersionCode ? prodCodes.includes(expectedVersionCode) : prodCodes.length > 0,
+    motiskoReleaseApiVersionMatch: expectedVersion ? releaseApi.version === expectedVersion : Boolean(releaseApi.version),
+    motiskoReleaseApiPlayLive: Boolean(releaseApi.playStoreLive),
+    motiskoApkRedirectOk:
+      (apkRedirectResp.status === 307 || apkRedirectResp.status === 308) &&
+      redirectLoc.includes('releases/latest/download/MFL-GameDay-Live.apk'),
+    retailStorePropagatedToTargetVersion: cleanVer ? storeHtml.includes(cleanVer) : true
+  };
+
+  const hardGatesOk =
+    checks.playPublicHttp200 &&
+    checks.playProductionTrackActive &&
+    checks.motiskoReleaseApiVersionMatch &&
+    checks.motiskoReleaseApiPlayLive &&
+    checks.motiskoApkRedirectOk;
+
+  const result = {
+    verdict: !hardGatesOk
+      ? 'FAIL'
+      : checks.retailStorePropagatedToTargetVersion
+        ? 'PASS_ALL_LIVE'
+        : 'PASS_PENDING_GOOGLE_UPDATE_SCAN',
+    productionVersionCodes: prodCodes,
+    motiskoReleaseApi: releaseApi,
+    checks
+  };
+  console.log(JSON.stringify(result, null, 2));
+  if (!hardGatesOk) {
+    process.exitCode = 1;
+  }
 }
 
 function listPngsInSubdirOrRoot(rootDir, subdirName, rootFallbackRegex) {
@@ -755,6 +954,12 @@ async function main() {
     case 'halt-release':
       await cmdHaltRelease(flags);
       break;
+    case 'set-rollout':
+      await cmdSetRollout(flags);
+      break;
+    case 'smoke':
+      await cmdSmoke(flags);
+      break;
     case 'sync-graphics':
       await cmdSyncGraphics(flags);
       break;
@@ -765,12 +970,14 @@ async function main() {
       console.log(`Usage: node scripts/play-publish.mjs <command> [flags]
 Commands:
   status                                    Read-only Play Console track & listing status (0 mutations)
+  smoke [--version=vX.Y.Z] [--version-code] Post-release 4-gate smoke regression across Play + motisko.com
   vitals                                    Read-only Android Vitals crash & ANR rate sets
   reviews                                   Read-only Google Play user reviews
   validate-bundle [--aab=<path>]            Offline SHA-256 cert + embedded R8 mapping check
-  upload-internal [--aab=<path>] [--notes]  Upload signed .aab to Internal track (--dry-run supported)
+  upload-release [--track=production] ...   Upload signed .aab to target track (--rollout, --dry-run)
   promote --from=internal --to=production   Promote track (--rollout=0.20, --dry-run supported)
-  halt-release --track=production --version-code=<N>  Emergency 1-second release halt
+  set-rollout --track=production --version-code=<N> --rollout=1.0  Expand or complete a staged rollout
+  halt-release --track=production --version-code=<N>  Emergency halt for staged ('inProgress') rollout
   sync-graphics [--dir=<path>]              Validate 24-bit RGB PNGs & sync store graphics (--dry-run)
   sync-listing [--title] [--short] [--full-file]  Sync en-US store copy (--dry-run)`);
   }
