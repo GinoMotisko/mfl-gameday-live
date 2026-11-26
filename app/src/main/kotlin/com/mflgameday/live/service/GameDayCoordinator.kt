@@ -730,6 +730,10 @@ class GameDayCoordinator(
 
   private fun onSpeechQueueIdle() {
     val state = _uiState.value
+    if (state.isRefreshing) {
+      // Defer speech-idle teardown while an active poll cycle is still collecting MFL/ESPN events
+      return
+    }
     val now = System.currentTimeMillis()
     val stillSpeaking = state.isSpeakingNow || voiceEngine.hasActiveOrPendingSpeech()
     syncForegroundServiceState(nowMillis = now)
