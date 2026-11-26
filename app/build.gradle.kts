@@ -4,6 +4,8 @@ plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
+  alias(libs.plugins.google.services)
+  alias(libs.plugins.firebase.crashlytics)
 }
 
 val keystorePropsFile = rootProject.file("keystore.properties")
@@ -17,6 +19,13 @@ val hasReleaseKeystore =
     !keystoreProps.getProperty("storeFile").isNullOrBlank() &&
     rootProject.file(keystoreProps.getProperty("storeFile")).exists()
 
+val googleServicesFile = file("google-services.json")
+val allowCrashlyticsMappingUpload =
+  System.getenv("CI") != "true" &&
+    providers.gradleProperty("crashlyticsMappingUpload").orNull != "false" &&
+    googleServicesFile.exists() &&
+    !googleServicesFile.readText().contains("ci-stub-gameday-live")
+
 android {
   namespace = "com.mflgameday.live"
   compileSdk = 36
@@ -24,8 +33,8 @@ android {
   defaultConfig {
     minSdk = 31
     targetSdk = 36
-    versionCode = 11
-    versionName = "1.3.1"
+    versionCode = 12
+    versionName = "1.3.2"
   }
 
   flavorDimensions += "distribution"
@@ -64,6 +73,11 @@ android {
       isShrinkResources = true
       ndk {
         debugSymbolLevel = "FULL"
+      }
+      (this as org.gradle.api.plugins.ExtensionAware).extensions.configure(
+        com.google.firebase.crashlytics.buildtools.gradle.CrashlyticsExtension::class.java
+      ) {
+        mappingFileUploadEnabled = allowCrashlyticsMappingUpload
       }
       if (hasReleaseKeystore) {
         signingConfig = signingConfigs.getByName("release")
@@ -144,7 +158,13 @@ dependencies {
   implementation(libs.androidx.navigation3.runtime)
   implementation(libs.androidx.lifecycle.viewmodel.navigation3)
 
-  // Google Play In-App Updates (strictly scoped to playStore flavor; Direct APK stays Play-Services-free)
+  // Native Google Firebase Crashlytics & Analytics (both direct & playStore flavors; AD_ID stripped in Manifest)
+  val firebaseBom = platform(libs.firebase.bom)
+  implementation(firebaseBom)
+  implementation(libs.firebase.crashlytics)
+  implementation(libs.firebase.analytics)
+  implementation(libs.androidx.fragment)
+
+  // Google Play In-App Updates (strictly scoped to playStore flavor; Direct APK stays Play-Core-free)
   add("playStoreImplementation", libs.play.app.update.ktx)
-  add("playStoreImplementation", libs.androidx.fragment)
 }

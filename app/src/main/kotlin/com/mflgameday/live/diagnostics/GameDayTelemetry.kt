@@ -3,10 +3,10 @@ package com.mflgameday.live.diagnostics
 import android.content.Context
 import android.os.Build
 import com.mflgameday.live.BuildConfig
+import com.mflgameday.live.model.GameDaySettings
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,14 +17,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 
 @Serializable
 data class TelemetrySnapshot(
@@ -59,35 +54,23 @@ data class TelemetrySnapshot(
     }
 }
 
-@Serializable
-data class TelemetryUploadPayload(
-  val telemetry: TelemetrySnapshot,
-  val operatingMode: String,
-  val lastCrash: CrashReportSummary? = null
-)
-
 /**
- * Privacy-first operational telemetry collector & optional anonymous health reporter.
- * - Awaits initial disk hydration (`initCompleted`) before evaluating auto-heartbeat intervals.
- * - Weights latency averages accurately when merging early cold-start polls with persisted history.
- * - Deduplicates crash reporting via `lastReportedCrashEpochMillis` so a stored crash is never re-sent on every launch.
+ * Privacy-first operational telemetry collector paired with native Google Firebase Crashlytics & Analytics.
+ * - Maintains local feed latency, ETag hit, and poll reliability counters on-device for the Settings Health UI
+ *   and 1-tap Email Support reports.
+ * - Syncs non-PII operational context keys and health snapshots to Firebase when `optInAnonymousTelemetry` is enabled
+ *   (replacing the legacy evaporating Vercel runtime-log beacon).
  * - Serializes persistence through `persistMutex` with atomic temp-file replacement.
  */
 object GameDayTelemetry {
-  private const val ENDPOINT_URL = "https://www.motisko.com/api/gameday/telemetry"
-  private const val MIN_AUTO_BEACON_INTERVAL_MS = 6L * 60L * 60L * 1000L // 6 hours
+  private const val MIN_AUTO_SYNC_INTERVAL_MS = 6L * 60L * 60L * 1000L // 6 hours
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private val persistMutex = Mutex()
-  private val beaconMutex = Mutex()
+  private val syncMutex = Mutex()
   private val fileIoLock = Any()
   private var initCompleted = CompletableDeferred<Unit>()
   private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = false }
-  private val httpClient = OkHttpClient.Builder()
-    .connectTimeout(8, TimeUnit.SECONDS)
-    .readTimeout(8, TimeUnit.SECONDS)
-    .writeTimeout(8, TimeUnit.SECONDS)
-    .build()
 
   private var metricsFile: File? = null
   private var installed = false
@@ -142,7 +125,7 @@ object GameDayTelemetry {
             networkDropRecoveries = loaded.networkDropRecoveries + early.networkDropRecoveries
           )
         }
-        persistLatestOrdered()
+        persistLatestOrdered(awaitInit = false)
       } finally {
         initCompleted.complete(Unit)
       }
@@ -202,7 +185,15 @@ object GameDayTelemetry {
     synchronized(this) {
       _snapshot.value = TelemetrySnapshot(sessionsStarted = 1L)
     }
-    scope.launch { persistLatestOrdered() }
+    scope.launch {
+      if (installed) {
+        initCompleted.await()
+      }
+      synchronized(this@GameDayTelemetry) {
+        _snapshot.value = TelemetrySnapshot(sessionsStarted = 1L)
+      }
+      persistLatestOrdered(awaitInit = false)
+    }
     _lastBeaconStatus.value = "Telemetry counters reset"
   }
 
@@ -210,85 +201,102 @@ object GameDayTelemetry {
     json.encodeToString(_snapshot.value)
   }.getOrDefault("{}")
 
-  fun maybeSendAutoHeartbeat(operatingMode: String, optInEnabled: Boolean, lastCrash: CrashReportSummary?) {
-    if (!optInEnabled) return
+  fun maybeSyncFirebaseHeartbeat(
+    context: Context,
+    settings: GameDaySettings,
+    leagueCount: Int,
+    lastCrash: CrashReportSummary?
+  ) {
+    if (!settings.optInAnonymousTelemetry) return
+    val appCtx = context.applicationContext
     scope.launch {
       if (installed) {
         initCompleted.await()
       }
-      beaconMutex.withLock {
+      syncMutex.withLock {
         val now = System.currentTimeMillis()
         val cur = _snapshot.value
         val unseenCrash = lastCrash != null && lastCrash.timestampMillis > cur.lastReportedCrashEpochMillis
-        if (!unseenCrash && (now - cur.lastHeartbeatEpochMillis) < MIN_AUTO_BEACON_INTERVAL_MS) {
+        if (!unseenCrash && (now - cur.lastHeartbeatEpochMillis) < MIN_AUTO_SYNC_INTERVAL_MS) {
+          GameDayFirebaseBridge.syncContext(appCtx, settings, leagueCount, cur)
           return@withLock
         }
-        sendSnapshotSuspend(
-          operatingMode = operatingMode,
-          lastCrash = if (unseenCrash) lastCrash else null,
+        syncSnapshotToFirebaseLocked(
+          appCtx = appCtx,
+          settings = settings,
+          leagueCount = leagueCount,
+          lastCrash = lastCrash,
           manual = false
         )
       }
     }
   }
 
-  fun sendManualSnapshotNow(operatingMode: String, lastCrash: CrashReportSummary?) {
+  fun syncManualSnapshotNow(
+    context: Context,
+    settings: GameDaySettings,
+    leagueCount: Int,
+    lastCrash: CrashReportSummary?
+  ) {
+    if (!settings.optInAnonymousTelemetry) {
+      _lastBeaconStatus.value = "Enable Anonymous Crash & Feed Health Reports above to sync to Firebase"
+      return
+    }
+    val appCtx = context.applicationContext
     scope.launch {
       if (installed) {
         initCompleted.await()
       }
-      beaconMutex.withLock {
-        sendSnapshotSuspend(operatingMode = operatingMode, lastCrash = lastCrash, manual = true)
+      syncMutex.withLock {
+        syncSnapshotToFirebaseLocked(
+          appCtx = appCtx,
+          settings = settings,
+          leagueCount = leagueCount,
+          lastCrash = lastCrash,
+          manual = true
+        )
       }
     }
   }
 
-  private suspend fun sendSnapshotSuspend(
-    operatingMode: String,
+  private suspend fun syncSnapshotToFirebaseLocked(
+    appCtx: Context,
+    settings: GameDaySettings,
+    leagueCount: Int,
     lastCrash: CrashReportSummary?,
     manual: Boolean
-  ): Boolean = withContext(Dispatchers.IO) {
-    if (manual) _lastBeaconStatus.value = "Sending anonymous snapshot…"
+  ) {
     val now = System.currentTimeMillis()
-    val payload = TelemetryUploadPayload(
-      telemetry = _snapshot.value.copy(lastHeartbeatEpochMillis = now),
-      operatingMode = operatingMode,
-      lastCrash = lastCrash
-    )
-    val bodyStr = json.encodeToString(payload)
-    val req = Request.Builder()
-      .url(ENDPOINT_URL)
-      .header("User-Agent", "GameDayLive/${BuildConfig.VERSION_NAME} (Android ${Build.VERSION.SDK_INT})")
-      .post(bodyStr.toRequestBody("application/json; charset=utf-8".toMediaType()))
-      .build()
-
-    runCatching {
-      httpClient.newCall(req).execute().use { resp ->
-        if (resp.isSuccessful) {
-          synchronized(this@GameDayTelemetry) {
-            val cur = _snapshot.value
-            val nextCrashTs = if (lastCrash != null) {
-              maxOf(cur.lastReportedCrashEpochMillis, lastCrash.timestampMillis)
-            } else {
-              cur.lastReportedCrashEpochMillis
-            }
-            _snapshot.value = cur.copy(
-              lastHeartbeatEpochMillis = now,
-              lastReportedCrashEpochMillis = nextCrashTs
-            )
-          }
-          persistLatestOrdered()
-          _lastBeaconStatus.value = "Telemetry snapshot delivered (HTTP ${resp.code})"
-          DiagnosticsLogger.info(LogSubsystem.NETWORK, "Anonymous telemetry snapshot delivered")
-          true
-        } else {
-          if (manual) _lastBeaconStatus.value = "Server returned HTTP ${resp.code}"
-          false
-        }
+    val snap = synchronized(this@GameDayTelemetry) {
+      val cur = _snapshot.value
+      val nextCrashTs = if (lastCrash != null) {
+        maxOf(cur.lastReportedCrashEpochMillis, lastCrash.timestampMillis)
+      } else {
+        cur.lastReportedCrashEpochMillis
       }
-    }.getOrElse { err ->
-      if (manual) _lastBeaconStatus.value = "Offline / unreachable (${err.javaClass.simpleName})"
-      false
+      val updated = cur.copy(
+        lastHeartbeatEpochMillis = now,
+        lastReportedCrashEpochMillis = nextCrashTs
+      )
+      _snapshot.value = updated
+      updated
+    }
+    persistLatestOrdered()
+    GameDayFirebaseBridge.syncContext(appCtx, settings, leagueCount, snap)
+    GameDayFirebaseBridge.logEvent(
+      context = appCtx,
+      eventName = "health_snapshot_synced",
+      params = mapOf(
+        "poll_success_pct" to snap.pollSuccessRatePct,
+        "espn_avg_ms" to snap.espnAvgLatencyMs,
+        "spoken_total" to snap.ttsAnnouncementsSpoken,
+        "manual" to manual
+      )
+    )
+    _lastBeaconStatus.value = if (manual) {
+      "Health snapshot queued for Google Firebase"
+    } else {
+      "Active · Google Firebase Crashlytics & Analytics"
     }
   }
 
@@ -299,7 +307,10 @@ object GameDayTelemetry {
     scope.launch { persistLatestOrdered() }
   }
 
-  private suspend fun persistLatestOrdered() {
+  private suspend fun persistLatestOrdered(awaitInit: Boolean = true) {
+    if (installed && awaitInit) {
+      initCompleted.await()
+    }
     val file = metricsFile ?: return
     persistMutex.withLock {
       runCatching {

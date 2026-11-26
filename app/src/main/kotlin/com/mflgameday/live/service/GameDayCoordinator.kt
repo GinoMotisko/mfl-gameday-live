@@ -13,9 +13,11 @@ import com.mflgameday.live.data.ManifestSyncOutcome
 import com.mflgameday.live.data.MflApiClient
 import com.mflgameday.live.data.MflLeagueMetadata
 import com.mflgameday.live.data.MflStatusInfo
+import com.mflgameday.live.data.ProfileSyncCodec
 import com.mflgameday.live.diagnostics.CrashReportSummary
 import com.mflgameday.live.diagnostics.DiagnosticEntry
 import com.mflgameday.live.diagnostics.DiagnosticsLogger
+import com.mflgameday.live.diagnostics.GameDayFirebaseBridge
 import com.mflgameday.live.diagnostics.GameDayTelemetry
 import com.mflgameday.live.diagnostics.LogSubsystem
 import com.mflgameday.live.diagnostics.TelemetrySnapshot
@@ -153,6 +155,7 @@ class GameDayCoordinator(
   val uiState: StateFlow<GameDayUiState> = _uiState.asStateFlow()
 
   init {
+    GameDayFirebaseBridge.install(appContext, _uiState.value.settings.optInAnonymousTelemetry)
     scope.launch {
       clayPackManager.manifest.collect { manifest ->
         _uiState.update { it.copy(clayManifest = manifest) }
@@ -210,9 +213,10 @@ class GameDayCoordinator(
       DiagnosticsLogger.lastCrash.collect { crash ->
         _uiState.update { it.copy(lastCrashReport = crash) }
         if (crash != null) {
-          GameDayTelemetry.maybeSendAutoHeartbeat(
-            operatingMode = _uiState.value.settings.operatingMode.name,
-            optInEnabled = _uiState.value.settings.optInAnonymousTelemetry,
+          GameDayTelemetry.maybeSyncFirebaseHeartbeat(
+            context = appContext,
+            settings = _uiState.value.settings,
+            leagueCount = _uiState.value.leagues.size,
             lastCrash = crash
           )
         }
@@ -229,9 +233,10 @@ class GameDayCoordinator(
       }
     }
     registerConnectivityWatcher()
-    GameDayTelemetry.maybeSendAutoHeartbeat(
-      operatingMode = _uiState.value.settings.operatingMode.name,
-      optInEnabled = _uiState.value.settings.optInAnonymousTelemetry,
+    GameDayTelemetry.maybeSyncFirebaseHeartbeat(
+      context = appContext,
+      settings = _uiState.value.settings,
+      leagueCount = _uiState.value.leagues.size,
       lastCrash = _uiState.value.lastCrashReport
     )
   }
@@ -279,13 +284,51 @@ class GameDayCoordinator(
   // -------------------- Settings & Mode Controls --------------------
 
   fun updateSettings(transform: (GameDaySettings) -> GameDaySettings) {
-    val updated = transform(_uiState.value.settings)
+    val prev = _uiState.value.settings
+    val updated = transform(prev)
     storage.saveSettings(updated)
     _uiState.update { it.copy(settings = updated) }
+    if (prev.optInAnonymousTelemetry != updated.optInAnonymousTelemetry) {
+      GameDayFirebaseBridge.setCollectionEnabled(appContext, updated.optInAnonymousTelemetry)
+      if (updated.optInAnonymousTelemetry) {
+        GameDayTelemetry.maybeSyncFirebaseHeartbeat(
+          context = appContext,
+          settings = updated,
+          leagueCount = _uiState.value.leagues.size,
+          lastCrash = _uiState.value.lastCrashReport
+        )
+      }
+    }
+    if (prev.voicePersona != updated.voicePersona || prev.scope != updated.scope) {
+      GameDayFirebaseBridge.logEvent(
+        context = appContext,
+        eventName = "commentator_selected",
+        params = mapOf(
+          "persona" to updated.voicePersona.name,
+          "scope" to updated.scope.name
+        )
+      )
+    }
+    GameDayFirebaseBridge.syncContext(
+      context = appContext,
+      settings = updated,
+      leagueCount = _uiState.value.leagues.size,
+      snapshot = _uiState.value.telemetrySnapshot
+    )
     if (updated.muted) {
       voiceEngine.stopAndClearQueue()
     }
     syncForegroundServiceState()
+  }
+
+  fun syncTelemetrySnapshotNow() {
+    val state = _uiState.value
+    GameDayTelemetry.syncManualSnapshotNow(
+      context = appContext,
+      settings = state.settings,
+      leagueCount = state.leagues.size,
+      lastCrash = state.lastCrashReport
+    )
   }
 
   fun selectActiveLeague(leagueId: String) {
@@ -300,6 +343,11 @@ class GameDayCoordinator(
         scope = com.mflgameday.live.model.AnnouncementScope.ALL_NFL
       )
     }
+    GameDayFirebaseBridge.logEvent(
+      context = appContext,
+      eventName = "mode_activated",
+      params = mapOf("mode" to OperatingMode.NFL_LIVE_ONLY.name, "league_count" to _uiState.value.leagues.size)
+    )
     restartPollingLoop()
   }
 
@@ -349,6 +397,11 @@ class GameDayCoordinator(
         currentPollIntervalSec = 30
       )
     }
+    GameDayFirebaseBridge.logEvent(
+      context = appContext,
+      eventName = "mode_activated",
+      params = mapOf("mode" to OperatingMode.DEMO_SIMULATOR.name, "league_count" to demoLeagues.size)
+    )
     syncForegroundServiceState()
   }
 
@@ -585,6 +638,100 @@ class GameDayCoordinator(
       )
       state.copy(leagues = updated, crossLeagueExposures = exposures)
     }
+  }
+
+  /**
+   * Exports a secret-free JSON snapshot of the user's tracked MFL leagues, voice commentator,
+   * broadcast scope/categories, and theme so setups clone across Phone <-> Tablet or Direct <-> Play Store in 2 taps.
+   */
+  fun exportSetupProfileJson(): String {
+    val state = _uiState.value
+    val realLeagues = if (state.settings.operatingMode == OperatingMode.DEMO_SIMULATOR) {
+      storage.loadLeagues()
+    } else {
+      state.leagues
+    }
+    val encoded = ProfileSyncCodec.encodeProfile(
+      settings = state.settings,
+      leagues = realLeagues
+    )
+    GameDayFirebaseBridge.logEvent(
+      context = appContext,
+      eventName = "profile_sync_action",
+      params = mapOf("direction" to "export", "league_count" to realLeagues.size)
+    )
+    DiagnosticsLogger.info(LogSubsystem.APP, "Exported secret-free setup profile (${realLeagues.size} league(s))")
+    return encoded
+  }
+
+  /**
+   * Validates and imports a secret-free GameDay setup profile JSON, preserving any local
+   * Android Keystore credentials already saved on this device.
+   */
+  fun importSetupProfileJson(rawJson: String): Result<Int> {
+    val decoded = ProfileSyncCodec.decodeOrNull(rawJson)
+      ?: return Result.failure(IllegalArgumentException("Not a valid GameDay Live profile JSON."))
+    val wasDemo = _uiState.value.settings.operatingMode == OperatingMode.DEMO_SIMULATOR
+    val existingLeagues = storage.loadLeagues()
+    val applied = ProfileSyncCodec.applyDecodedProfile(
+      decoded = decoded,
+      existingSettings = _uiState.value.settings,
+      existingLeagues = existingLeagues
+    )
+    val mergedWithKeyFlags = applied.leagues.map { cfg ->
+      cfg.copy(hasCustomApiKey = !storage.loadLeagueApiKey(cfg.leagueId).isNullOrBlank())
+    }
+    val allowedIds = mergedWithKeyFlags.map { it.leagueId }.toSet()
+    storage.saveLeagues(mergedWithKeyFlags)
+    storage.saveSettings(applied.settings)
+    if (wasDemo) {
+      nameExpander = null
+    }
+    differ.reset()
+    _uiState.update { state ->
+      val keptSnapshots = if (wasDemo) {
+        emptyMap()
+      } else {
+        state.leagueSnapshots.filterKeys { id -> id in allowedIds }
+      }
+      val cleanedPlayers = if (wasDemo) emptyMap() else state.playersDb
+      val cleanedGames = if (wasDemo) emptyList() else state.nflGames
+      val cleanedPlayLog = state.playLog.filterNot { entry ->
+        ServiceLifecyclePolicy.isSimulatedPlayId(entry.event.id)
+      }
+      val recomputedExposures = if (keptSnapshots.isEmpty()) {
+        emptyMap()
+      } else {
+        BestBallAndPaceCalculator.buildCrossLeagueExposure(keptSnapshots.values, cleanedPlayers)
+      }
+      state.copy(
+        settings = applied.settings,
+        leagues = mergedWithKeyFlags,
+        leagueSnapshots = keptSnapshots,
+        nflGames = cleanedGames,
+        playersDb = cleanedPlayers,
+        crossLeagueExposures = recomputedExposures,
+        playLog = cleanedPlayLog,
+        activeBannerAlert = null,
+        statusMessage = "Setup profile imported (${mergedWithKeyFlags.size} league(s))"
+      )
+    }
+    GameDayFirebaseBridge.syncContext(
+      context = appContext,
+      settings = applied.settings,
+      leagueCount = mergedWithKeyFlags.size,
+      snapshot = _uiState.value.telemetrySnapshot
+    )
+    GameDayFirebaseBridge.logEvent(
+      context = appContext,
+      eventName = "profile_sync_action",
+      params = mapOf("direction" to "import", "league_count" to mergedWithKeyFlags.size)
+    )
+    DiagnosticsLogger.info(LogSubsystem.APP, "Imported setup profile (${mergedWithKeyFlags.size} league(s))")
+    if (applied.settings.operatingMode != OperatingMode.UNCONFIGURED) {
+      restartPollingLoop()
+    }
+    return Result.success(mergedWithKeyFlags.size)
   }
 
   // -------------------- Live Polling, Schedule Refresh & Simulator --------------------
@@ -915,6 +1062,15 @@ class GameDayCoordinator(
         includeFantasyContextInSpeech = state.settings.announceFantasyContextOnPlays
       )
       GameDayTelemetry.recordTtsSpoken()
+      GameDayFirebaseBridge.logEvent(
+        context = appContext,
+        eventName = "spoken_play_called",
+        params = mapOf(
+          "event_kind" to burstEvent.kind.name,
+          "persona" to state.settings.voicePersona.name,
+          "is_demo" to true
+        )
+      )
       voiceEngine.enqueueAnnouncement(
         text = sampleEntry.spokenText,
         kind = burstEvent.kind,
@@ -1364,6 +1520,15 @@ class GameDayCoordinator(
 
       if (shouldSpeak && (forceSpeak || !_uiState.value.isBroadcastPaused)) {
         GameDayTelemetry.recordTtsSpoken()
+        GameDayFirebaseBridge.logEvent(
+          context = appContext,
+          eventName = "spoken_play_called",
+          params = mapOf(
+            "event_kind" to event.kind.name,
+            "persona" to settings.voicePersona.name,
+            "is_demo" to (settings.operatingMode == OperatingMode.DEMO_SIMULATOR)
+          )
+        )
         voiceEngine.enqueueAnnouncement(
           text = entry.spokenText,
           kind = event.kind,

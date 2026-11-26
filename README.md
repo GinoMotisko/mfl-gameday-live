@@ -2,8 +2,8 @@
 
 **Hands-Free Spoken Big-Play Score Announcer & Multi-League MyFantasyLeague Scoreboard for Phones, Foldables & Tablets**
 
-[![Google Play](https://img.shields.io/badge/Google_Play-GameDay_Live_(v1.3.1)-34a853?style=for-the-badge&logo=google-play&logoColor=white)](https://play.google.com/store/apps/details?id=com.motiskoventures.gameday)
-[![Download Direct Pro APK](https://img.shields.io/badge/Direct_Pro_APK-v1.3.1_(Signed_Release)-d4ff78?style=for-the-badge&logo=android&logoColor=090f10)](https://github.com/GinoMotisko/mfl-gameday-live/releases/latest)
+[![Google Play](https://img.shields.io/badge/Google_Play-GameDay_Live_(v1.3.2)-34a853?style=for-the-badge&logo=google-play&logoColor=white)](https://play.google.com/store/apps/details?id=com.motiskoventures.gameday)
+[![Download Direct Pro APK](https://img.shields.io/badge/Direct_Pro_APK-v1.3.2_(Signed_Release)-d4ff78?style=for-the-badge&logo=android&logoColor=090f10)](https://github.com/GinoMotisko/mfl-gameday-live/releases/latest)
 [![Product Showcase](https://img.shields.io/badge/Showcase_&_QR_Install-motisko.com%2Fgameday-91e3db?style=for-the-badge)](https://www.motisko.com/gameday)
 
 Built by **[Gino Motisko](https://www.motisko.com)** (`Motisko Ventures LLC` · `Applied AI & Practice Leadership`). Inspired by MyFantasyLeague's classic 15-year Windows `GameDay` desktop announcer and [`darcuri/gameannouncer`](https://github.com/darcuri/gameannouncer), re-architected from the ground up in **Kotlin + Jetpack Compose** for modern Android 12–16+ devices (**Samsung Galaxy Tab S10+ / S7**, **Google Pixel Fold**, compact 8" tablets, and Android phones).
@@ -48,7 +48,7 @@ Built by **[Gino Motisko](https://www.motisko.com)** (`Motisko Ventures LLC` · 
   - **Auto Dark / Light (`SYSTEM_AUTO`)** + 5 broadcast themes (*Stadium PrimeTime*, *Sunday Daylight*, *Cyber Gridiron OLED*, *Classic GameDay Gold*, *RedZone Octane*) with 64MB disk-cached official NFL logos, player headshots, and animated MFL franchise GIFs.
 - **Hardened Android 12L–17 Runtime**:
   - `mediaPlayback` Foreground Service (`GameDayLiveService`) + `PARTIAL_WAKE_LOCK` + `FLAG_KEEP_SCREEN_ON` stadium mode.
-  - `ConnectivityManager.NetworkCallback` auto-recovery, HTTP 429 rate-limit backoff, self-healing TTS rebinding, and a built-in **Diagnostic & Crash Console** (`DiagnosticsLogger`) with automatic `<REDACTED>` credential scrubbing.
+  - `ConnectivityManager.NetworkCallback` auto-recovery, HTTP 429 rate-limit backoff, self-healing TTS rebinding, **2-Tap Secret-Free Cross-Device Profile Sync** (`ProfileSyncCodec`), Ad-ID-free **Google Firebase Crashlytics & Reliability Telemetry** (user-toggleable), and a built-in **Diagnostic & Crash Console** (`DiagnosticsLogger`) with automatic `<REDACTED>` credential scrubbing.
 
 ---
 

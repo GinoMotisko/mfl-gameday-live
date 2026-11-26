@@ -24,7 +24,7 @@ flowchart TD
         EspnClient["EspnApiClient\nSituation & Field Progress · Play Dedupe"]
         BreakdownParser["ScoringBreakdownParser\nHTML entity + category parser"]
         ClayMgr["ClayPackManager\nETag conditional manifest.json delta sync\nKillSwitch rollback · O(1) MFL/ESPN/Slug lookup"]
-        Storage["GameDayStorage\nAndroid Keystore AES-256-GCM Vault\n24h Player Cache + Play Log JSON"]
+        Storage["GameDayStorage + ProfileSyncCodec\nAndroid Keystore AES-256-GCM Vault\n2-Tap Secret-Free Profile Sync\n24h Player Cache + Play Log JSON"]
     end
 
     subgraph EngineLayer["Pure Domain Engine (com.mflgameday.live.engine)"]
@@ -35,7 +35,7 @@ flowchart TD
 
     subgraph Runtime["Service, Audio & UI"]
         Coord["GameDayCoordinator\nApplication-Scoped StateFlow +\nConnectivity Auto-Recovery"]
-        Diag["DiagnosticsLogger + GameDayTelemetry\nChained Crash Catcher · Redacted Ring-Buffer\nFeed Latency & Opt-In Anonymous Health Beacon"]
+        Diag["DiagnosticsLogger + GameDayTelemetry\n+ GameDayFirebaseBridge\nChained Crash Catcher · Redacted Ring-Buffer\nAd-ID-Free Firebase Crashlytics & Analytics"]
         Voice["GameDayVoiceEngine + VoiceCastingResolver\n+ StadiumSoundSynthesizer\n6 Distinct Neural Commentators · Self-Healing Rebind\n16-bit PCM Broadcast Stingers"]
         FGS["GameDayLiveService\nmediaPlayback Foreground Service"]
         UI["Jetpack Compose Adaptive Shell\nTab S10+ · Hinge-Safe Pixel Fold · Phone Hub\nTop Booth Pill + 5-Category Settings Studio\nGooglePinnedLinearField + 5-State Clay Rings"]
