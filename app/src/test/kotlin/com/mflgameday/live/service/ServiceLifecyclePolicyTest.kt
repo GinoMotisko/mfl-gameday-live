@@ -154,6 +154,26 @@ class ServiceLifecyclePolicyTest {
         nowMillis = now
       )
     )
+    assertTrue(
+      "Swiping closed before initial scoreboard loads (!isServiceActiveOrPending) must still cancel polling",
+      ServiceLifecyclePolicy.shouldStopOnMainActivityDestroyed(
+        settings = settings,
+        isBroadcastPaused = false,
+        isChangingConfigurations = false,
+        isFinishing = false,
+        isServiceActiveOrPending = false
+      )
+    )
+    assertFalse(
+      "RAM reclamation of backgrounded MainActivity must NOT kill an active GameDayLiveService",
+      ServiceLifecyclePolicy.shouldStopOnMainActivityDestroyed(
+        settings = settings,
+        isBroadcastPaused = false,
+        isChangingConfigurations = false,
+        isFinishing = false,
+        isServiceActiveOrPending = true
+      )
+    )
     assertEquals(
       60,
       ServiceLifecyclePolicy.computePollWaitSeconds(

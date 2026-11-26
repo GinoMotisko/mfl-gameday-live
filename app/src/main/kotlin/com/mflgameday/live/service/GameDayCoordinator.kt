@@ -728,6 +728,23 @@ class GameDayCoordinator(
     }
   }
 
+  fun onMainActivityDestroyed(isChangingConfigurations: Boolean, isFinishing: Boolean) {
+    val state = _uiState.value
+    val serviceActive = GameDayLiveService.isRunningInForeground || GameDayLiveService.isStartPending
+    if (
+      ServiceLifecyclePolicy.shouldStopOnMainActivityDestroyed(
+        settings = state.settings,
+        isBroadcastPaused = state.isBroadcastPaused,
+        isChangingConfigurations = isChangingConfigurations,
+        isFinishing = isFinishing,
+        isServiceActiveOrPending = serviceActive
+      )
+    ) {
+      GameDayTelemetry.recordSwipeCloseStop()
+      pauseLiveBroadcastSession("Stopped when closed before live service started")
+    }
+  }
+
   private fun onSpeechQueueIdle() {
     val state = _uiState.value
     if (state.isRefreshing) {

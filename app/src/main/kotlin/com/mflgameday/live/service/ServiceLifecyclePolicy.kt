@@ -36,6 +36,25 @@ object ServiceLifecyclePolicy {
     return settings.stopWhenSwipedClosed
   }
 
+  /**
+   * Handles swipe-close / Back-exit when `GameDayLiveService` has not yet been promoted
+   * (e.g., user swiped closed from Recents before the initial scoreboard fetch completed, so
+   * `GameDayLiveService.onTaskRemoved` cannot fire), without stopping an active background
+   * `GameDayLiveService` if Android merely reclaims a backgrounded `MainActivity` for RAM.
+   */
+  fun shouldStopOnMainActivityDestroyed(
+    settings: GameDaySettings,
+    isBroadcastPaused: Boolean,
+    isChangingConfigurations: Boolean,
+    isFinishing: Boolean,
+    isServiceActiveOrPending: Boolean
+  ): Boolean {
+    if (isChangingConfigurations || isBroadcastPaused) return false
+    if (settings.operatingMode == OperatingMode.UNCONFIGURED) return false
+    if (!settings.stopWhenSwipedClosed) return false
+    return isFinishing || !isServiceActiveOrPending
+  }
+
   fun shouldAutoResumeOnAppForeground(
     settings: GameDaySettings,
     isBroadcastPaused: Boolean,
