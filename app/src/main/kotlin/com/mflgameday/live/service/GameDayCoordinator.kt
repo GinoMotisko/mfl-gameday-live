@@ -415,6 +415,7 @@ class GameDayCoordinator(
     pollLoopJob = null
     voiceEngine.stopAndClearQueue()
     GameDayLiveService.cancelPregameWakeAlarm(appContext)
+    GameDayLiveService.dismissPregameReminderNotification(appContext)
     val realLeagues = storage.loadLeagues()
     updateSettings { it.copy(operatingMode = OperatingMode.UNCONFIGURED) }
     _uiState.update { it.copy(leagues = realLeagues, statusMessage = "Setup") }
@@ -789,9 +790,8 @@ class GameDayCoordinator(
     pollLoopJob = null
     sleepJob = null
     voiceEngine.stopAndClearQueue()
-    if (explicitUserPause) {
-      GameDayLiveService.cancelPregameWakeAlarm(appContext)
-    }
+    GameDayLiveService.cancelPregameWakeAlarm(appContext)
+    GameDayLiveService.dismissPregameReminderNotification(appContext)
     _uiState.update {
       it.copy(
         isBroadcastPaused = true,
@@ -831,6 +831,7 @@ class GameDayCoordinator(
 
   fun onAppForegrounded() {
     isAppInForeground = true
+    GameDayLiveService.dismissPregameReminderNotification(appContext)
     scope.launch { maybeSyncClayManifest(force = false) }
     val state = _uiState.value
     val isLoopActive = pollLoopJob?.isActive == true
@@ -905,14 +906,22 @@ class GameDayCoordinator(
     }
   }
 
-  fun onPregameWakeAlarmFired() {
+  fun onPregameWakeAlarmFired(canStartFgsFromBackground: Boolean) {
     val state = _uiState.value
     val mode = state.settings.operatingMode
     if (mode != OperatingMode.MFL_AND_NFL_LIVE && mode != OperatingMode.NFL_LIVE_ONLY) return
-    if (!state.settings.runInBackgroundService || pausedExplicitlyByUser) return
-    if (pollLoopJob?.isActive == true && !state.isBroadcastPaused) return
-    DiagnosticsLogger.info(LogSubsystem.APP, "Pregame wake alarm fired — starting game-window broadcast standby")
-    restartPollingLoop(syncService = true)
+    if (!state.settings.runInBackgroundService || state.isBroadcastPaused || pausedExplicitlyByUser) return
+    if (pollLoopJob?.isActive == true) return
+    if (isAppInForeground || canStartFgsFromBackground) {
+      DiagnosticsLogger.info(LogSubsystem.APP, "Pregame wake alarm fired (FGS-exempt) — starting game-window broadcast standby")
+      restartPollingLoop(syncService = true)
+    } else {
+      // Android 12+ blocks startForegroundService() from inexact alarms when battery optimizations are active.
+      // Post a standard 1-tap reminder notification instead so tapping launches MainActivity with full FGS rights!
+      DiagnosticsLogger.info(LogSubsystem.APP, "Pregame wake alarm fired (battery optimized) — posting 1-tap pregame reminder")
+      GameDayLiveService.postPregameReadyReminderNotification(appContext)
+      _uiState.update { it.copy(statusMessage = "Game Window Open · Tap to Go Live") }
+    }
   }
 
   fun onMainActivityDestroyed(isChangingConfigurations: Boolean, isFinishing: Boolean) {
@@ -983,14 +992,15 @@ class GameDayCoordinator(
     if (hadActiveLoop) {
       DiagnosticsLogger.info(LogSubsystem.APP, logReason)
     }
+    val canAutoStartFgs = nextWakeAt != null && GameDayLiveService.canAutoStartForegroundFromAlarm(appContext)
     _uiState.update {
       it.copy(
         isRefreshing = false,
         nextRefreshAtMillis = null,
-        statusMessage = if (nextWakeAt != null) {
-          "Standing By · Auto-wakes 90m pregame"
-        } else {
-          "Standing By · Auto-wakes on open"
+        statusMessage = when {
+          canAutoStartFgs -> "Standing By · Auto-wakes 90m pregame"
+          nextWakeAt != null -> "Standing By · Pregame reminder 90m out"
+          else -> "Standing By · Auto-wakes on open"
         }
       )
     }

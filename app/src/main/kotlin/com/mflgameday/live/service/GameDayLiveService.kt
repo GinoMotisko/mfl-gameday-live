@@ -65,7 +65,8 @@ class PregameWakeReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent?) {
     if (intent?.action != GameDayLiveService.ACTION_PREGAME_WAKE) return
     val app = context.applicationContext as? MflGameDayApp ?: return
-    app.coordinator.onPregameWakeAlarmFired()
+    val canStartFgs = GameDayLiveService.canAutoStartForegroundFromAlarm(context)
+    app.coordinator.onPregameWakeAlarmFired(canStartFgsFromBackground = canStartFgs)
   }
 }
 
@@ -83,6 +84,7 @@ class GameDayLiveService : LifecycleService() {
   companion object {
     private const val CHANNEL_ID = "mfl_gameday_live_broadcast"
     private const val NOTIFICATION_ID = 2026
+    private const val PREGAME_REMINDER_NOTIFICATION_ID = 2027
     private const val PREGAME_ALARM_REQ_CODE = 2090
     internal const val ACTION_TOGGLE_MUTE = "com.mflgameday.live.ACTION_TOGGLE_MUTE"
     internal const val ACTION_REFRESH_NOW = "com.mflgameday.live.ACTION_REFRESH_NOW"
@@ -153,8 +155,73 @@ class GameDayLiveService : LifecycleService() {
       }
     }
 
+    fun canAutoStartForegroundFromAlarm(context: Context): Boolean {
+      val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return false
+      return pm.isIgnoringBatteryOptimizations(context.packageName)
+    }
+
+    fun dismissPregameReminderNotification(context: Context) {
+      runCatching {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        nm?.cancel(PREGAME_REMINDER_NOTIFICATION_ID)
+      }
+    }
+
+    fun postPregameReadyReminderNotification(context: Context) {
+      runCatching {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        if (!nm.areNotificationsEnabled()) return
+        ensureChannelStatic(nm)
+        val openAppIntent = PendingIntent.getActivity(
+          context,
+          PREGAME_REMINDER_NOTIFICATION_ID,
+          Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+          },
+          PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val title = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) {
+          "GameDay Live · Kickoff Within 90m"
+        } else {
+          "MFL GameDay · Kickoff Within 90m"
+        }
+        val body = "Tap to start hands-free live score & fantasy announcements."
+        val notification = Notification.Builder(context, CHANNEL_ID)
+          .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+          .setContentTitle(title)
+          .setContentText(body)
+          .setStyle(Notification.BigTextStyle().bigText(body))
+          .setContentIntent(openAppIntent)
+          .setAutoCancel(true)
+          .setCategory(Notification.CATEGORY_REMINDER)
+          .setVisibility(Notification.VISIBILITY_PUBLIC)
+          .build()
+        nm.notify(PREGAME_REMINDER_NOTIFICATION_ID, notification)
+      }
+    }
+
+    private fun ensureChannelStatic(nm: NotificationManager) {
+      if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+        val channelTitle = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) {
+          "GameDay Live Announcer"
+        } else {
+          "MFL GameDay Live Announcer"
+        }
+        val channel = NotificationChannel(
+          CHANNEL_ID,
+          channelTitle,
+          NotificationManager.IMPORTANCE_LOW
+        ).apply {
+          description = "Keeps live football & fantasy score polling and spoken play-by-play active during game windows."
+          setShowBadge(false)
+        }
+        nm.createNotificationChannel(channel)
+      }
+    }
+
     fun start(context: Context) {
       cancelPregameWakeAlarm(context)
+      dismissPregameReminderNotification(context)
       pendingStopRequested = false
       if (isRunningInForeground) {
         notifySummaryUpdate(context)
