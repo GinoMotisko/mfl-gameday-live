@@ -22,7 +22,9 @@ import okhttp3.Request
 data class EspnScoreboardSnapshot(
   val weekNumber: Int?,
   val games: List<NflGameState>,
-  val liveEventIds: List<String>
+  val liveEventIds: List<String>,
+  val seasonType: Int? = null,
+  val seasonYear: Int? = null
 )
 
 data class EspnGameSummary(
@@ -41,10 +43,16 @@ class EspnApiClient(
   private val userAgent: String = "MFLGameDayAndroid/1.0"
 ) {
 
-  suspend fun fetchScoreboard(week: Int? = null): EspnScoreboardSnapshot {
+  suspend fun fetchScoreboard(week: Int? = null, seasonType: Int? = null): EspnScoreboardSnapshot {
     val base = "$baseUrl/scoreboard".toHttpUrlOrNull() ?: throw IOException("Invalid ESPN URL")
-    val url = if (week != null) base.newBuilder().addQueryParameter("week", week.toString()).build() else base
-    val root = fetchJsonObject(url.toString())
+    val urlBuilder = base.newBuilder()
+    if (seasonType != null) {
+      urlBuilder.addQueryParameter("seasontype", seasonType.toString())
+    }
+    if (week != null) {
+      urlBuilder.addQueryParameter("week", week.toString())
+    }
+    val root = fetchJsonObject(urlBuilder.build().toString())
     return parseScoreboard(root)
   }
 
@@ -56,6 +64,9 @@ class EspnApiClient(
   }
 
   internal fun parseScoreboard(root: JsonObject): EspnScoreboardSnapshot {
+    val seasonObj = root.obj("season")
+    val seasonType = seasonObj?.intOrNull("type")
+    val seasonYear = seasonObj?.intOrNull("year")
     val weekNum = root.obj("week")?.intOrNull("number")
     val events = (root["events"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
     val games = ArrayList<NflGameState>(events.size)
@@ -130,7 +141,9 @@ class EspnApiClient(
     return EspnScoreboardSnapshot(
       weekNumber = weekNum,
       games = sortedGames,
-      liveEventIds = liveIds
+      liveEventIds = liveIds,
+      seasonType = seasonType,
+      seasonYear = seasonYear
     )
   }
 

@@ -1,6 +1,7 @@
 package com.mflgameday.live.service
 
 import com.mflgameday.live.data.LenientJson
+import com.mflgameday.live.data.MflStatusInfo
 import com.mflgameday.live.data.RawMflFranchiseLive
 import com.mflgameday.live.data.RawMflMatchup
 import com.mflgameday.live.data.RawMflPlayerScore
@@ -214,5 +215,197 @@ class ServiceLifecyclePolicyTest {
     assertTrue("Must not flag Bench Outscored Starter when starter hasn't played yet", m.away.benchInsights.isEmpty())
     assertEquals(22.5, m.away.projectedScore, 0.01)
     assertEquals("Omitted/inactive player must get 0.0 projection, not 18.5 fallback", 0.0, m.home.projectedScore, 0.01)
+  }
+
+  @Test
+  fun foregroundReturnWhilePolling_wakesStaleOrFinishedSlateImmediately() {
+    val activeSettings = GameDaySettings(operatingMode = OperatingMode.MFL_AND_NFL_LIVE)
+    // User backgrounded app Monday night and reopened Wednesday (stale >= 45s while loop sleeping)
+    assertTrue(
+      ServiceLifecyclePolicy.shouldWakeActivePollOnAppForeground(
+        settings = activeSettings,
+        isBroadcastPaused = false,
+        isPollLoopActive = true,
+        isRefreshing = false,
+        lastUpdatedMillis = 100_000L,
+        nowMillis = 200_000L,
+        allGamesFinal = false
+      )
+    )
+    // All displayed games from previous week are FINAL -> wake immediately even if recently polled
+    assertTrue(
+      ServiceLifecyclePolicy.shouldWakeActivePollOnAppForeground(
+        settings = activeSettings,
+        isBroadcastPaused = false,
+        isPollLoopActive = true,
+        isRefreshing = false,
+        lastUpdatedMillis = 195_000L,
+        nowMillis = 200_000L,
+        allGamesFinal = true
+      )
+    )
+    // Freshly updated 5s ago with active/scheduled games -> do not spam duplicate network poll
+    assertFalse(
+      ServiceLifecyclePolicy.shouldWakeActivePollOnAppForeground(
+        settings = activeSettings,
+        isBroadcastPaused = false,
+        isPollLoopActive = true,
+        isRefreshing = false,
+        lastUpdatedMillis = 195_000L,
+        nowMillis = 200_000L,
+        allGamesFinal = false
+      )
+    )
+    // Demo simulator or paused session should not wake live network poll here
+    assertFalse(
+      ServiceLifecyclePolicy.shouldWakeActivePollOnAppForeground(
+        settings = GameDaySettings(operatingMode = OperatingMode.DEMO_SIMULATOR),
+        isBroadcastPaused = false,
+        isPollLoopActive = true,
+        isRefreshing = false,
+        lastUpdatedMillis = 0L,
+        nowMillis = 200_000L,
+        allGamesFinal = true
+      )
+    )
+  }
+
+  @Test
+  fun weekResolution_autoAdvancesBothNflAndMflWithoutSplitBrain() {
+    // Case A: Mid-week MFL status where CompletedWeek == LiveScoringWeek (11) and Current/Upcoming == 12
+    val midWeekStatus = MflStatusInfo(
+      year = 2026,
+      currentWeek = 12,
+      liveScoringWeek = 11,
+      upcomingWeek = 12,
+      lineupWeek = 12,
+      completedWeek = 11
+    )
+    assertEquals(12, midWeekStatus.effectiveActiveWeek)
+    assertEquals(
+      12,
+      ServiceLifecyclePolicy.resolveEffectiveWeek(
+        operatingMode = OperatingMode.MFL_AND_NFL_LIVE,
+        currentUiWeek = 11,
+        mflStatus = midWeekStatus,
+        espnSeasonType = 2,
+        espnWeekNumber = 12,
+        previousGamesAllFinal = true
+      )
+    )
+
+    // Case B: Wednesday morning where all Week 11 games are FINAL and ESPN rolled to Week 12
+    // even if MFL CompletedWeek lags briefly at 10 — AND Cycle 2 holds Week 12 once SCHEDULED games load!
+    val laggingStatus = MflStatusInfo(
+      year = 2026,
+      currentWeek = 11,
+      liveScoringWeek = 11,
+      upcomingWeek = 12,
+      lineupWeek = 12,
+      completedWeek = 10
+    )
+    assertEquals(
+      12,
+      ServiceLifecyclePolicy.resolveEffectiveWeek(
+        operatingMode = OperatingMode.MFL_AND_NFL_LIVE,
+        currentUiWeek = 11,
+        mflStatus = laggingStatus,
+        espnSeasonType = 2,
+        espnWeekNumber = 12,
+        previousGamesAllFinal = true
+      )
+    )
+    assertEquals(
+      "Must hold Week 12 on subsequent poll cycles after Week 12 SCHEDULED games replace FINAL games",
+      12,
+      ServiceLifecyclePolicy.resolveEffectiveWeek(
+        operatingMode = OperatingMode.MFL_AND_NFL_LIVE,
+        currentUiWeek = 12,
+        mflStatus = laggingStatus,
+        espnSeasonType = 2,
+        espnWeekNumber = 12,
+        previousGamesAllFinal = false
+      )
+    )
+
+    assertEquals(
+      "Must hold Week 12 even during a temporary ESPN outage within the same season",
+      12,
+      ServiceLifecyclePolicy.resolveEffectiveWeek(
+        operatingMode = OperatingMode.MFL_AND_NFL_LIVE,
+        currentUiWeek = 12,
+        mflStatus = laggingStatus,
+        espnSeasonType = null,
+        espnWeekNumber = null,
+        previousGamesAllFinal = false,
+        sameSeasonAsUi = true
+      )
+    )
+    assertEquals(
+      "Must allow new season year (2027 Week 1) to reset from prior season Week 22",
+      1,
+      ServiceLifecyclePolicy.resolveEffectiveWeek(
+        operatingMode = OperatingMode.MFL_AND_NFL_LIVE,
+        currentUiWeek = 22,
+        mflStatus = MflStatusInfo(2027, currentWeek = 1, liveScoringWeek = 1, upcomingWeek = 1, lineupWeek = 1, completedWeek = 0),
+        espnSeasonType = null,
+        espnWeekNumber = null,
+        previousGamesAllFinal = false,
+        sameSeasonAsUi = false
+      )
+    )
+
+    // Case C: Monday Night Football still active/scheduled (previousGamesAllFinal == false, currentUiWeek == 11) -> stay on Week 11!
+    assertEquals(
+      11,
+      ServiceLifecyclePolicy.resolveEffectiveWeek(
+        operatingMode = OperatingMode.MFL_AND_NFL_LIVE,
+        currentUiWeek = 11,
+        mflStatus = laggingStatus,
+        espnSeasonType = 2,
+        espnWeekNumber = 12,
+        previousGamesAllFinal = false
+      )
+    )
+
+    // Case D: NFL Postseason Wild Card (1->19) & Super Bowl (seasonType = 3, week = 5 -> capped at MFL Week 22!)
+    assertEquals(
+      19,
+      ServiceLifecyclePolicy.resolveEffectiveWeek(
+        operatingMode = OperatingMode.NFL_LIVE_ONLY,
+        currentUiWeek = 18,
+        mflStatus = null,
+        espnSeasonType = 3,
+        espnWeekNumber = 1,
+        previousGamesAllFinal = true
+      )
+    )
+    assertEquals(
+      22,
+      ServiceLifecyclePolicy.resolveEffectiveWeek(
+        operatingMode = OperatingMode.MFL_AND_NFL_LIVE,
+        currentUiWeek = 22,
+        mflStatus = MflStatusInfo(2025, currentWeek = 23, liveScoringWeek = 22, upcomingWeek = 23, lineupWeek = 23, completedWeek = 22),
+        espnSeasonType = 3,
+        espnWeekNumber = 5,
+        previousGamesAllFinal = true
+      )
+    )
+
+    // Case E: ESPN Offseason (seasonType = 4, week = 1) must NEVER reset post-Super-Bowl Week 22 back to Week 1
+    assertEquals(
+      22,
+      ServiceLifecyclePolicy.resolveEffectiveWeek(
+        operatingMode = OperatingMode.NFL_LIVE_ONLY,
+        currentUiWeek = 22,
+        mflStatus = MflStatusInfo(2025, currentWeek = 23, liveScoringWeek = 22, upcomingWeek = 23, lineupWeek = 23, completedWeek = 22),
+        espnSeasonType = 4,
+        espnWeekNumber = 1,
+        previousGamesAllFinal = true
+      )
+    )
+    assertEquals(2 to 12, ServiceLifecyclePolicy.toEspnTargetSeasonTypeAndWeek(12))
+    assertEquals(3 to 1, ServiceLifecyclePolicy.toEspnTargetSeasonTypeAndWeek(19))
+    assertEquals(3 to 5, ServiceLifecyclePolicy.toEspnTargetSeasonTypeAndWeek(22))
   }
 }

@@ -271,4 +271,67 @@ class MflAndEspnPipelineIntegrationTest {
       server.shutdown()
     }
   }
+
+  @Test
+  fun mflStatus_parsesCompletedAndLineupWeek_andAdvancesEffectiveActiveWeekMidWeek() = runTest {
+    val server = MockWebServer()
+    // 1. Mid-week (Tue/Wed): CompletedWeek == LiveScoringWeek == 11, while CurrentWeek/UpcomingWeek/LineupWeek == 12
+    server.enqueue(
+      MockResponse().setBody(
+        """
+        {
+          "version": "1.0",
+          "encoding": "utf-8",
+          "mfl_status": {
+            "year": "2026",
+            "weeks": {
+              "LiveScoringWeek": "11",
+              "CompletedWeek": "11",
+              "CurrentWeek": "12",
+              "UpcomingWeek": "12",
+              "LineupWeek": "12"
+            }
+          }
+        }
+        """.trimIndent()
+      )
+    )
+    // 2. Monday Night Football still active: CompletedWeek == 10, LiveScoringWeek == 11, UpcomingWeek == 12
+    server.enqueue(
+      MockResponse().setBody(
+        """
+        {
+          "version": "1.0",
+          "encoding": "utf-8",
+          "mfl_status": {
+            "year": "2026",
+            "weeks": {
+              "LiveScoringWeek": "11",
+              "CompletedWeek": "10",
+              "CurrentWeek": "11",
+              "UpcomingWeek": "12",
+              "LineupWeek": "12"
+            }
+          }
+        }
+        """.trimIndent()
+      )
+    )
+    server.start()
+    try {
+      val client = MflApiClient(apiBaseUrl = server.url("/").toString().trimEnd('/'), minRequestSpacingMs = 1L)
+      val midWeek = client.fetchStatus(2026)
+      assertEquals(11, midWeek.completedWeek)
+      assertEquals(11, midWeek.liveScoringWeek)
+      assertEquals(12, midWeek.currentWeek)
+      assertEquals("Must advance to Week 12 once Week 11 is marked CompletedWeek", 12, midWeek.effectiveActiveWeek)
+
+      val activeMonday = client.fetchStatus(2026)
+      assertEquals(10, activeMonday.completedWeek)
+      assertEquals(11, activeMonday.liveScoringWeek)
+      assertEquals("Must stay on Week 11 while Week 11 is not yet CompletedWeek", 11, activeMonday.effectiveActiveWeek)
+    } finally {
+      server.shutdown()
+    }
+  }
 }

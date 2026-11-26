@@ -32,8 +32,33 @@ data class MflStatusInfo(
   val year: Int,
   val currentWeek: Int,
   val liveScoringWeek: Int,
-  val upcomingWeek: Int
-)
+  val upcomingWeek: Int,
+  val lineupWeek: Int = upcomingWeek,
+  val completedWeek: Int = 0
+) {
+  companion object {
+    const val MAX_MFL_NFL_WEEK = 22
+  }
+
+  /**
+   * Once MFL marks `CompletedWeek >= LiveScoringWeek` after Monday Night Football,
+   * `LiveScoringWeek` stays pinned to the finished week until Thursday pregame while
+   * `CurrentWeek` / `UpcomingWeek` / `LineupWeek` advance to the next week.
+   * Capped at `MAX_MFL_NFL_WEEK` (22 = Super Bowl) because MFL `nfl_sched_23.json` does not exist.
+   */
+  val effectiveActiveWeek: Int
+    get() {
+      val clampedLive = liveScoringWeek.coerceIn(1, MAX_MFL_NFL_WEEK)
+      if (completedWeek >= liveScoringWeek) {
+        val nextCandidates = listOf(currentWeek, upcomingWeek, lineupWeek)
+          .filter { it in (completedWeek + 1)..MAX_MFL_NFL_WEEK }
+        if (nextCandidates.isNotEmpty()) {
+          return nextCandidates.min()
+        }
+      }
+      return clampedLive
+    }
+}
 
 data class MflLeagueMetadata(
   val leagueId: String,
@@ -205,11 +230,15 @@ class MflApiClient(
     val current = weeks?.intOrNull("CurrentWeek") ?: 1
     val live = weeks?.intOrNull("LiveScoringWeek") ?: current
     val upcoming = weeks?.intOrNull("UpcomingWeek") ?: live
+    val lineup = weeks?.intOrNull("LineupWeek") ?: upcoming
+    val completed = weeks?.intOrNull("CompletedWeek") ?: 0
     return MflStatusInfo(
       year = resolvedYear,
       currentWeek = current,
       liveScoringWeek = live,
-      upcomingWeek = upcoming
+      upcomingWeek = upcoming,
+      lineupWeek = lineup,
+      completedWeek = completed
     )
   }
 
