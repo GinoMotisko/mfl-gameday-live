@@ -126,15 +126,16 @@ class InAppUpdatePolicyTest {
       )
     )
 
-    // Stalled IMMEDIATE flow (priority >= 4) resumed in MainActivity.onResume -> RESUME_IMMEDIATE
+    // Stalled IMMEDIATE flow resumed in MainActivity.onResume even when Play returns updatePriority = 0 -> RESUME_IMMEDIATE
     assertEquals(
       UpdateFlowAction.RESUME_IMMEDIATE,
       InAppUpdatePolicy.decidePlayStoreAction(
         isDownloaded = false,
         isDeveloperTriggeredUpdateInProgress = true,
+        wasImmediateFlowStarted = true,
         isUpdateAvailable = false,
         availableVersionCode = 12,
-        updatePriority = 5,
+        updatePriority = 0,
         isFlexibleAllowed = false,
         isImmediateAllowed = true,
         isSpeakingNow = false,

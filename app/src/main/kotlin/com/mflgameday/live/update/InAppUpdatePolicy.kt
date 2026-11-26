@@ -25,6 +25,7 @@ object InAppUpdatePolicy {
   fun decidePlayStoreAction(
     isDownloaded: Boolean,
     isDeveloperTriggeredUpdateInProgress: Boolean,
+    wasImmediateFlowStarted: Boolean = false,
     isUpdateAvailable: Boolean,
     availableVersionCode: Int,
     updatePriority: Int,
@@ -41,7 +42,7 @@ object InAppUpdatePolicy {
     }
     val clampedPriority = updatePriority.coerceIn(0, 5)
     if (isDeveloperTriggeredUpdateInProgress) {
-      return if (clampedPriority >= IMMEDIATE_PRIORITY_THRESHOLD && isImmediateAllowed) {
+      return if ((wasImmediateFlowStarted || clampedPriority >= IMMEDIATE_PRIORITY_THRESHOLD) && isImmediateAllowed) {
         UpdateFlowAction.RESUME_IMMEDIATE
       } else {
         // A Flexible download/install is already in progress in the background; never escalate to Immediate!

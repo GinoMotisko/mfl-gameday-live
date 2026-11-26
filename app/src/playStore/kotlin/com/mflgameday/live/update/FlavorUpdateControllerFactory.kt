@@ -38,7 +38,7 @@ private class PlayStoreUpdateController(
   private var boundLauncher: ActivityResultLauncher<IntentSenderRequest>? = null
   private var listenerRegistered = false
 
-  private var updateFlowInFlight = false
+  private var infoQueryInFlight = false
   private var pendingFlowType: Int = -1
   private var pendingVersionCode: Int = -1
   private var promptedFlexibleVersionThisProcess: Int = -1
@@ -69,6 +69,7 @@ private class PlayStoreUpdateController(
       InstallStatus.INSTALLED,
       InstallStatus.CANCELED,
       InstallStatus.FAILED -> {
+        prefs.edit().remove(KEY_ACTIVE_IMMEDIATE_VERSION_CODE).apply()
         _uiState.value = AppUpdateUiState()
       }
       else -> Unit
@@ -93,6 +94,7 @@ private class PlayStoreUpdateController(
     if (boundActivityHash == System.identityHashCode(activity)) {
       boundActivityHash = null
       boundLauncher = null
+      infoQueryInFlight = false
       if (listenerRegistered) {
         runCatching { appUpdateManager.unregisterListener(installListener) }
         listenerRegistered = false
@@ -100,17 +102,23 @@ private class PlayStoreUpdateController(
     }
   }
 
-  override fun onActivityResumed(activity: ComponentActivity, isSpeakingNow: Boolean) {
-    if (updateFlowInFlight) return
+  override fun onActivityResumed(activity: ComponentActivity, isSpeakingProvider: () -> Boolean) {
+    if (infoQueryInFlight) return
+    infoQueryInFlight = true
     runCatching {
-      appUpdateManager.appUpdateInfo.addOnSuccessListener { info ->
-        if (updateFlowInFlight) return@addOnSuccessListener
-        if (boundActivityHash != System.identityHashCode(activity)) return@addOnSuccessListener
-        if (!activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return@addOnSuccessListener
-        val launcher = boundLauncher ?: return@addOnSuccessListener
-        handleUpdateInfo(info = info, launcher = launcher, isSpeakingNow = isSpeakingNow)
-      }
+      appUpdateManager.appUpdateInfo
+        .addOnSuccessListener { info ->
+          infoQueryInFlight = false
+          if (boundActivityHash != System.identityHashCode(activity)) return@addOnSuccessListener
+          if (!activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return@addOnSuccessListener
+          val launcher = boundLauncher ?: return@addOnSuccessListener
+          handleUpdateInfo(info = info, launcher = launcher, isSpeakingNow = isSpeakingProvider())
+        }
+        .addOnFailureListener {
+          infoQueryInFlight = false
+        }
     }.onFailure { err ->
+      infoQueryInFlight = false
       DiagnosticsLogger.info(LogSubsystem.APP, "Play In-App Update check skipped: ${err.message}")
     }
   }
@@ -120,6 +128,14 @@ private class PlayStoreUpdateController(
     launcher: ActivityResultLauncher<IntentSenderRequest>,
     isSpeakingNow: Boolean
   ) {
+    val availability = info.updateAvailability()
+    if (
+      availability != UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS &&
+      availability != UpdateAvailability.UPDATE_AVAILABLE
+    ) {
+      prefs.edit().remove(KEY_ACTIVE_IMMEDIATE_VERSION_CODE).apply()
+    }
+
     if (info.installStatus() == InstallStatus.DOWNLOADING) {
       val total = info.totalBytesToDownload()
       val fraction = if (total > 0L) {
@@ -137,12 +153,16 @@ private class PlayStoreUpdateController(
     val availableCode = info.availableVersionCode()
     val dismissedCode = prefs.getInt(KEY_DISMISSED_VERSION_CODE, -1)
     val dismissedAt = prefs.getLong(KEY_DISMISSED_AT_MILLIS, 0L)
+    val activeImmediateCode = prefs.getInt(KEY_ACTIVE_IMMEDIATE_VERSION_CODE, -1)
+    val wasImmediateStarted =
+      activeImmediateCode > 0 && (availableCode <= 0 || activeImmediateCode == availableCode)
 
     val action = InAppUpdatePolicy.decidePlayStoreAction(
       isDownloaded = info.installStatus() == InstallStatus.DOWNLOADED,
       isDeveloperTriggeredUpdateInProgress =
-        info.updateAvailability() == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS,
-      isUpdateAvailable = info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE,
+        availability == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS,
+      wasImmediateFlowStarted = wasImmediateStarted,
+      isUpdateAvailable = availability == UpdateAvailability.UPDATE_AVAILABLE,
       availableVersionCode = availableCode,
       updatePriority = info.updatePriority(),
       isFlexibleAllowed = info.isUpdateTypeAllowed(AppUpdateType.FLEXIBLE),
@@ -161,7 +181,8 @@ private class PlayStoreUpdateController(
       }
       UpdateFlowAction.PROMPT_IMMEDIATE,
       UpdateFlowAction.RESUME_IMMEDIATE -> {
-        if (abortedImmediateVersionThisProcess == availableCode && availableCode > 0) return
+        val trackedCode = if (availableCode > 0) availableCode else activeImmediateCode
+        if (abortedImmediateVersionThisProcess == trackedCode && trackedCode > 0) return
         runCatching {
           val started = appUpdateManager.startUpdateFlowForResult(
             info,
@@ -169,9 +190,11 @@ private class PlayStoreUpdateController(
             AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build()
           )
           if (started) {
-            updateFlowInFlight = true
             pendingFlowType = AppUpdateType.IMMEDIATE
-            pendingVersionCode = availableCode
+            pendingVersionCode = trackedCode
+            if (trackedCode > 0) {
+              prefs.edit().putInt(KEY_ACTIVE_IMMEDIATE_VERSION_CODE, trackedCode).apply()
+            }
           }
         }.onFailure { err ->
           DiagnosticsLogger.warn(LogSubsystem.APP, "Immediate Play update launch failed: ${err.message}")
@@ -186,10 +209,10 @@ private class PlayStoreUpdateController(
             AppUpdateOptions.newBuilder(AppUpdateType.FLEXIBLE).build()
           )
           if (started) {
-            updateFlowInFlight = true
             pendingFlowType = AppUpdateType.FLEXIBLE
             pendingVersionCode = availableCode
             promptedFlexibleVersionThisProcess = availableCode
+            prefs.edit().remove(KEY_ACTIVE_IMMEDIATE_VERSION_CODE).apply()
           }
         }.onFailure { err ->
           DiagnosticsLogger.info(LogSubsystem.APP, "Flexible Play update prompt skipped: ${err.message}")
@@ -202,7 +225,6 @@ private class PlayStoreUpdateController(
   override fun onUpdateFlowResult(resultCode: Int) {
     val flowType = pendingFlowType
     val code = pendingVersionCode
-    updateFlowInFlight = false
     pendingFlowType = -1
     pendingVersionCode = -1
 
@@ -213,7 +235,7 @@ private class PlayStoreUpdateController(
           .putLong(KEY_DISMISSED_AT_MILLIS, System.currentTimeMillis())
           .apply()
       } else if (flowType == AppUpdateType.IMMEDIATE) {
-        // Prevent an infinite MainActivity.onResume() flicker loop if Play fails offline or user backs out
+        prefs.edit().remove(KEY_ACTIVE_IMMEDIATE_VERSION_CODE).apply()
         abortedImmediateVersionThisProcess = code
       }
     }
@@ -237,5 +259,6 @@ private class PlayStoreUpdateController(
     private const val PREFS_NAME = "mfl_gameday_update_prefs"
     private const val KEY_DISMISSED_VERSION_CODE = "dismissed_play_version_code"
     private const val KEY_DISMISSED_AT_MILLIS = "dismissed_play_at_millis"
+    private const val KEY_ACTIVE_IMMEDIATE_VERSION_CODE = "active_immediate_play_version_code"
   }
 }

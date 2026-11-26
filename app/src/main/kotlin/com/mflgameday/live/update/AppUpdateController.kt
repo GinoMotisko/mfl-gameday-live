@@ -28,7 +28,7 @@ interface AppUpdateController {
 
   fun unbindActivity(activity: ComponentActivity)
 
-  fun onActivityResumed(activity: ComponentActivity, isSpeakingNow: Boolean)
+  fun onActivityResumed(activity: ComponentActivity, isSpeakingProvider: () -> Boolean)
 
   fun onUpdateFlowResult(resultCode: Int)
 

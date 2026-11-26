@@ -177,6 +177,19 @@ async function runTests() {
   assert.equal(completedFromStaged.releases[0].status, 'completed');
   assert.equal('userFraction' in completedFromStaged.releases[0], false);
 
+  // Google Play API v3 forbids mutating inAppUpdatePriority on an already-rolled-out release
+  assert.throws(
+    () =>
+      buildSetRolloutTrackUpdate({
+        track: 'production',
+        existingReleases: staged.releases,
+        versionCode: '7',
+        rollout: 0.5,
+        updatePriority: 5
+      }),
+    /Cannot change inAppUpdatePriority/
+  );
+
   // 5b. Smoke gate rejects halted releases, mismatched SHA-256 checksums, and stale /gameday showcase HTML
   const validSha = '002f0ad8b4ac09e790d7b2affb9aa159d331ce27b8b9ef37a783aa4ccfa10c68';
   const validShowcase = '<a href="https://play.google.com/store/apps/details?id=com.motiskoventures.gameday">Get it on Google Play</a><span>v1.2.3</span>';

@@ -52,7 +52,7 @@ private class DirectApkUpdateController(
 
   override fun unbindActivity(activity: ComponentActivity) = Unit
 
-  override fun onActivityResumed(activity: ComponentActivity, isSpeakingNow: Boolean) {
+  override fun onActivityResumed(activity: ComponentActivity, isSpeakingProvider: () -> Boolean) {
     val now = System.currentTimeMillis()
     val cachedRemote = prefs.getString(KEY_LAST_REMOTE_VERSION, null)
     if (!cachedRemote.isNullOrBlank()) {

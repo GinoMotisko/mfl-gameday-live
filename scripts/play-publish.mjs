@@ -657,16 +657,21 @@ export function buildSetRolloutTrackUpdate({ track, existingReleases = [], versi
   if (!target) {
     throw new Error(`Version code ${code} not found on track '${track}'`);
   }
-  const resolvedPriority =
-    updatePriority !== undefined
-      ? validateUpdatePriority(updatePriority)
-      : validateUpdatePriority(target.inAppUpdatePriority ?? 0);
+  const existingPriority = validateUpdatePriority(target.inAppUpdatePriority ?? 0);
+  if (updatePriority !== undefined) {
+    const requestedPriority = validateUpdatePriority(updatePriority);
+    if (requestedPriority !== existingPriority) {
+      throw new Error(
+        `Cannot change inAppUpdatePriority from ${existingPriority} to ${requestedPriority} on existing release ${code} (Google Play API v3 requires uploading a new release to change inAppUpdatePriority)`
+      );
+    }
+  }
   return buildTrackReleaseUpdate({
     track,
     existingReleases,
     versionCodes: target.versionCodes,
     rollout: checkedRollout,
-    updatePriority: resolvedPriority,
+    updatePriority: existingPriority,
     releaseName: target.name,
     fallbackReleaseNotes: target.releaseNotes || []
   });

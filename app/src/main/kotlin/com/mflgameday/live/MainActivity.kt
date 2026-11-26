@@ -44,8 +44,12 @@ class MainActivity : ComponentActivity() {
     val app = application as MflGameDayApp
     val state = app.coordinator.uiState.value
     if (state.settings.operatingMode != OperatingMode.UNCONFIGURED) {
-      val speaking = state.isSpeakingNow || app.coordinator.voiceEngine.hasActiveOrPendingSpeech()
-      app.updateController.onActivityResumed(this, isSpeakingNow = speaking)
+      app.updateController.onActivityResumed(
+        activity = this,
+        isSpeakingProvider = {
+          app.coordinator.uiState.value.isSpeakingNow || app.coordinator.voiceEngine.hasActiveOrPendingSpeech()
+        }
+      )
     }
   }
 
