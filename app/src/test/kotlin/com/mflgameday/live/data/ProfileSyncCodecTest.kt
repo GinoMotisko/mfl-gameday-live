@@ -149,10 +149,24 @@ class ProfileSyncCodecTest {
     assertEquals(OperatingMode.MFL_AND_NFL_LIVE, applied.settings.operatingMode)
 
     val emptyLeaguesFromDemo = ProfileSyncCodec.decodeAndApply(
-      rawJson = """{"schemaVersion":1,"leagues":[],"preferences":{"operatingMode":"DEMO_SIMULATOR"}}""",
+      rawJson = """{"schemaVersion":1,"leagues":[],"preferences":{"operatingMode":"DEMO_SIMULATOR","enabledCategories":[]}}""",
       existingSettings = GameDaySettings(operatingMode = OperatingMode.DEMO_SIMULATOR),
-      existingLeagues = emptyList()
+      existingLeagues = listOf(
+        LeagueConfig(leagueId = "99999", leagueName = "Existing Local League", year = 2026, franchiseId = "0001", franchiseName = "Local Team")
+      )
     )
-    assertEquals(OperatingMode.NFL_LIVE_ONLY, emptyLeaguesFromDemo.settings.operatingMode)
+    assertEquals(OperatingMode.MFL_AND_NFL_LIVE, emptyLeaguesFromDemo.settings.operatingMode)
+    assertTrue("Explicitly empty enabledCategories [] must be preserved on import", emptyLeaguesFromDemo.settings.enabledCategories.isEmpty())
+    assertEquals("Existing local leagues must never be dropped when merging", 1, emptyLeaguesFromDemo.leagues.size)
+
+    val existingWithCap = ProfileSyncCodec.decodeAndApply(
+      rawJson = json,
+      existingSettings = GameDaySettings(operatingMode = OperatingMode.MFL_AND_NFL_LIVE),
+      existingLeagues = listOf(
+        LeagueConfig(leagueId = "88888", leagueName = "Preserved 26th Local League", year = 2026, franchiseId = "0002", franchiseName = "Local 2")
+      )
+    )
+    assertEquals(ProfileSyncCodec.MAX_IMPORTED_LEAGUES + 1, existingWithCap.leagues.size)
+    assertTrue(existingWithCap.leagues.any { it.leagueId == "88888" })
   }
 }

@@ -187,11 +187,10 @@ object ProfileSyncCodec {
       )
     }.distinctBy { it.leagueId }.take(MAX_IMPORTED_LEAGUES)
 
-    // Imported leagues take priority in order, keeping any non-overlapping local leagues after them (capped to MAX_IMPORTED_LEAGUES)
+    // Imported leagues take priority in order (capped to MAX_IMPORTED_LEAGUES), while ALWAYS preserving all non-overlapping existing local leagues
     val importedIds = sanitizedImported.map { it.leagueId }.toSet()
     val mergedLeagues = (sanitizedImported + existingLeagues.filterNot { it.leagueId in importedIds })
       .distinctBy { it.leagueId }
-      .take(MAX_IMPORTED_LEAGUES)
 
     val p = decoded.preferences
     val requestedNonDemoMode = p.operatingMode?.takeIf { it != OperatingMode.DEMO_SIMULATOR }
@@ -219,7 +218,7 @@ object ProfileSyncCodec {
       mflUsername = existingSettings.mflUsername,
       themePreset = p.themePreset ?: existingSettings.themePreset,
       scope = p.scope ?: existingSettings.scope,
-      enabledCategories = p.enabledCategories?.takeIf { it.isNotEmpty() } ?: existingSettings.enabledCategories,
+      enabledCategories = p.enabledCategories ?: existingSettings.enabledCategories,
       voicePersona = p.voicePersona ?: existingSettings.voicePersona,
       customSpeechRate = (p.customSpeechRate?.takeIf { it.isFinite() } ?: existingSettings.customSpeechRate)
         .coerceIn(0.60f, 1.50f),
