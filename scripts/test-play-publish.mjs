@@ -14,6 +14,7 @@ import {
   evaluateSmokeGate,
   parseArgs,
   validateRolloutFraction,
+  validateUpdatePriority,
   verifyAabBundleIntegrity,
   verifyAabStructure,
   verifyPng24BitRgbBuffer,
@@ -112,6 +113,26 @@ async function runTests() {
   assert.deepEqual(staged.releases[1].versionCodes, ['7']);
   assert.equal(staged.releases[1].status, 'inProgress');
   assert.equal(staged.releases[1].userFraction, 0.2);
+  assert.equal(staged.releases[1].inAppUpdatePriority, 0);
+
+  assert.equal(validateUpdatePriority(undefined), 0);
+  assert.equal(validateUpdatePriority('5'), 5);
+  assert.throws(() => validateUpdatePriority(true), /Invalid --update-priority/);
+  assert.throws(() => validateRolloutFraction(true), /Invalid --rollout/);
+  assert.throws(() => validateUpdatePriority('-1'), /Invalid --update-priority/);
+  assert.throws(() => validateUpdatePriority('6'), /Invalid --update-priority/);
+  assert.throws(() => validateUpdatePriority('2.5'), /Invalid --update-priority/);
+
+  const urgentRelease = buildTrackReleaseUpdate({
+    track: 'production',
+    existingReleases: [],
+    versionCodes: [11],
+    rollout: 1.0,
+    updatePriority: 5,
+    releaseName: '11 (1.3.1)',
+    notesText: 'Critical API update'
+  });
+  assert.equal(urgentRelease.releases[0].inAppUpdatePriority, 5);
 
   const halted = buildHaltTrackUpdate({
     track: 'production',

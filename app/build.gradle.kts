@@ -24,8 +24,8 @@ android {
   defaultConfig {
     minSdk = 31
     targetSdk = 36
-    versionCode = 10
-    versionName = "1.3.0"
+    versionCode = 11
+    versionName = "1.3.1"
   }
 
   flavorDimensions += "distribution"
@@ -143,4 +143,8 @@ dependencies {
   implementation(libs.androidx.navigation3.ui)
   implementation(libs.androidx.navigation3.runtime)
   implementation(libs.androidx.lifecycle.viewmodel.navigation3)
+
+  // Google Play In-App Updates (strictly scoped to playStore flavor; Direct APK stays Play-Services-free)
+  add("playStoreImplementation", libs.play.app.update.ktx)
+  add("playStoreImplementation", libs.androidx.fragment)
 }

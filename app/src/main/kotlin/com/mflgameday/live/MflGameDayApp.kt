@@ -9,9 +9,13 @@ import coil.memory.MemoryCache
 import com.mflgameday.live.diagnostics.DiagnosticsLogger
 import com.mflgameday.live.diagnostics.GameDayTelemetry
 import com.mflgameday.live.service.GameDayCoordinator
+import com.mflgameday.live.update.AppUpdateController
+import com.mflgameday.live.update.FlavorUpdateControllerFactory
 
 class MflGameDayApp : Application(), ImageLoaderFactory {
   lateinit var coordinator: GameDayCoordinator
+    private set
+  lateinit var updateController: AppUpdateController
     private set
 
   override fun onCreate() {
@@ -19,6 +23,7 @@ class MflGameDayApp : Application(), ImageLoaderFactory {
     DiagnosticsLogger.install(this)
     GameDayTelemetry.install(this)
     coordinator = GameDayCoordinator(this)
+    updateController = FlavorUpdateControllerFactory.create(this)
   }
 
   override fun newImageLoader(): ImageLoader {

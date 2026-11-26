@@ -444,6 +444,7 @@ async function cmdUploadInternal(flags) {
   const targetTrack = String(flags.track || 'internal');
   const isDryRun = Boolean(flags['dry-run']);
   const rollout = validateRolloutFraction(flags.rollout);
+  const updatePriority = validateUpdatePriority(flags['update-priority']);
   const notes = String(flags.notes || 'Bug fixes, audio engine improvements, and UI polish.');
 
   const integrity = verifyAabBundleIntegrity(aabPath);
@@ -479,6 +480,7 @@ async function cmdUploadInternal(flags) {
       existingReleases: existingTrack.releases || [],
       versionCodes: [versionCode],
       rollout,
+      updatePriority,
       releaseName: `${versionCode} (${flags['version-name'] || 'release'})`,
       notesText: notes
     });
@@ -519,11 +521,16 @@ async function cmdPromote(flags) {
     if (!latestRelease?.versionCodes?.length) {
       throw new Error(`No active versionCodes found on source track '${fromTrack}'`);
     }
+    const explicitPriority =
+      flags['update-priority'] !== undefined
+        ? validateUpdatePriority(flags['update-priority'])
+        : validateUpdatePriority(latestRelease.inAppUpdatePriority ?? 0);
     const trackPayload = buildTrackReleaseUpdate({
       track: toTrack,
       existingReleases: dst.releases || [],
       versionCodes: latestRelease.versionCodes,
       rollout,
+      updatePriority: explicitPriority,
       notesText: flags.notes ? String(flags.notes) : undefined,
       fallbackReleaseNotes: latestRelease.releaseNotes || []
     });
@@ -543,11 +550,28 @@ async function cmdPromote(flags) {
 }
 
 export function validateRolloutFraction(rawRollout) {
+  if (typeof rawRollout === 'boolean') {
+    throw new Error(`Invalid --rollout=${rawRollout}; use --rollout=<0.01..1.0>`);
+  }
   const rollout = rawRollout !== undefined ? Number(rawRollout) : 1.0;
   if (Number.isNaN(rollout) || rollout <= 0 || rollout > 1) {
     throw new Error(`Invalid --rollout=${rawRollout}; must be in (0.0, 1.0]`);
   }
   return rollout;
+}
+
+export function validateUpdatePriority(rawPriority) {
+  if (rawPriority === undefined || rawPriority === null || rawPriority === '') {
+    return 0;
+  }
+  if (typeof rawPriority === 'boolean') {
+    throw new Error(`Invalid --update-priority=${rawPriority}; use --update-priority=<0..5>`);
+  }
+  const parsed = Number(rawPriority);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 5) {
+    throw new Error(`Invalid --update-priority=${rawPriority}; must be an integer 0..5 (0-3 Flexible, 4-5 Immediate)`);
+  }
+  return parsed;
 }
 
 /**
@@ -558,11 +582,13 @@ export function buildTrackReleaseUpdate({
   existingReleases = [],
   versionCodes,
   rollout = 1.0,
+  updatePriority = 0,
   releaseName,
   notesText,
   fallbackReleaseNotes = []
 }) {
   const checkedRollout = validateRolloutFraction(rollout);
+  const checkedPriority = validateUpdatePriority(updatePriority);
   const normalizedCodes = versionCodes.map(String);
   const newCodeSet = new Set(normalizedCodes);
   const preservedCompleted =
@@ -575,6 +601,7 @@ export function buildTrackReleaseUpdate({
     ...(releaseName ? { name: releaseName } : {}),
     versionCodes: normalizedCodes,
     status: checkedRollout < 1.0 ? 'inProgress' : 'completed',
+    inAppUpdatePriority: checkedPriority,
     ...(checkedRollout < 1.0 ? { userFraction: checkedRollout } : {}),
     releaseNotes: notesText ? [{ language: 'en-US', text: String(notesText) }] : fallbackReleaseNotes
   };
@@ -617,7 +644,7 @@ export function buildHaltTrackUpdate({ track, existingReleases = [], versionCode
 /**
  * Pure builder for expanding or completing an existing staged (`inProgress` or `halted`) release in-place.
  */
-export function buildSetRolloutTrackUpdate({ track, existingReleases = [], versionCode, rollout }) {
+export function buildSetRolloutTrackUpdate({ track, existingReleases = [], versionCode, rollout, updatePriority }) {
   const code = String(versionCode || '');
   if (!code) {
     throw new Error('Pass --version-code=<N> for set-rollout');
@@ -630,11 +657,16 @@ export function buildSetRolloutTrackUpdate({ track, existingReleases = [], versi
   if (!target) {
     throw new Error(`Version code ${code} not found on track '${track}'`);
   }
+  const resolvedPriority =
+    updatePriority !== undefined
+      ? validateUpdatePriority(updatePriority)
+      : validateUpdatePriority(target.inAppUpdatePriority ?? 0);
   return buildTrackReleaseUpdate({
     track,
     existingReleases,
     versionCodes: target.versionCodes,
     rollout: checkedRollout,
+    updatePriority: resolvedPriority,
     releaseName: target.name,
     fallbackReleaseNotes: target.releaseNotes || []
   });
@@ -689,7 +721,8 @@ async function cmdSetRollout(flags) {
       track,
       existingReleases: existingTrack.releases || [],
       versionCode,
-      rollout
+      rollout,
+      updatePriority: flags['update-priority']
     });
     await playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/${track}`, {
       method: 'PUT',
