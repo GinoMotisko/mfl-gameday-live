@@ -46,21 +46,24 @@ private class PlayStoreUpdateController(
   private var dismissedRestartReadyThisSession: Boolean = false
 
   private val installListener = InstallStateUpdatedListener { state ->
+    val isImmediateActive = prefs.getInt(KEY_ACTIVE_IMMEDIATE_VERSION_CODE, -1) > 0
     when (state.installStatus()) {
       InstallStatus.DOWNLOADING -> {
-        val total = state.totalBytesToDownload()
-        val fraction = if (total > 0L) {
-          (state.bytesDownloaded().toFloat() / total.toFloat()).coerceIn(0f, 1f)
-        } else {
-          null
+        if (!isImmediateActive) {
+          val total = state.totalBytesToDownload()
+          val fraction = if (total > 0L) {
+            (state.bytesDownloaded().toFloat() / total.toFloat()).coerceIn(0f, 1f)
+          } else {
+            null
+          }
+          _uiState.value = AppUpdateUiState(
+            bannerKind = AppUpdateBannerKind.PLAY_STORE_DOWNLOADING,
+            downloadProgressFraction = fraction
+          )
         }
-        _uiState.value = AppUpdateUiState(
-          bannerKind = AppUpdateBannerKind.PLAY_STORE_DOWNLOADING,
-          downloadProgressFraction = fraction
-        )
       }
       InstallStatus.DOWNLOADED -> {
-        if (!dismissedRestartReadyThisSession) {
+        if (!isImmediateActive && !dismissedRestartReadyThisSession) {
           _uiState.value = AppUpdateUiState(
             bannerKind = AppUpdateBannerKind.PLAY_STORE_RESTART_READY
           )
@@ -136,7 +139,14 @@ private class PlayStoreUpdateController(
       prefs.edit().remove(KEY_ACTIVE_IMMEDIATE_VERSION_CODE).apply()
     }
 
-    if (info.installStatus() == InstallStatus.DOWNLOADING) {
+    val availableCode = info.availableVersionCode()
+    val dismissedCode = prefs.getInt(KEY_DISMISSED_VERSION_CODE, -1)
+    val dismissedAt = prefs.getLong(KEY_DISMISSED_AT_MILLIS, 0L)
+    val activeImmediateCode = prefs.getInt(KEY_ACTIVE_IMMEDIATE_VERSION_CODE, -1)
+    val wasImmediateStarted =
+      activeImmediateCode > 0 && (availableCode <= 0 || activeImmediateCode == availableCode)
+
+    if (!wasImmediateStarted && info.installStatus() == InstallStatus.DOWNLOADING) {
       val total = info.totalBytesToDownload()
       val fraction = if (total > 0L) {
         (info.bytesDownloaded().toFloat() / total.toFloat()).coerceIn(0f, 1f)
@@ -149,13 +159,6 @@ private class PlayStoreUpdateController(
       )
       return
     }
-
-    val availableCode = info.availableVersionCode()
-    val dismissedCode = prefs.getInt(KEY_DISMISSED_VERSION_CODE, -1)
-    val dismissedAt = prefs.getLong(KEY_DISMISSED_AT_MILLIS, 0L)
-    val activeImmediateCode = prefs.getInt(KEY_ACTIVE_IMMEDIATE_VERSION_CODE, -1)
-    val wasImmediateStarted =
-      activeImmediateCode > 0 && (availableCode <= 0 || activeImmediateCode == availableCode)
 
     val action = InAppUpdatePolicy.decidePlayStoreAction(
       isDownloaded = info.installStatus() == InstallStatus.DOWNLOADED,
