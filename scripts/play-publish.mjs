@@ -713,6 +713,8 @@ export function evaluateSmokeGate({
   expectedVersionCode,
   expectedSha256,
   releaseApi,
+  showcaseStatus = 200,
+  showcaseHtml = '',
   apkRedirectStatus,
   apkRedirectLocation = '',
   apkTargetHttpOk = true,
@@ -724,6 +726,7 @@ export function evaluateSmokeGate({
   const apiSha = typeof releaseApi?.sha256 === 'string' ? releaseApi.sha256.toLowerCase() : '';
   const hasValidShaFormat = /^[a-f0-9]{64}$/.test(apiSha);
   const shaMatchesExpected = expectedSha256 ? apiSha === expectedSha256.toLowerCase() : true;
+  const showcaseHasVersion = expectedVersion ? showcaseHtml.includes(expectedVersion) : true;
 
   const checks = {
     playPublicHttp200: Boolean(publicStoreLive),
@@ -731,6 +734,11 @@ export function evaluateSmokeGate({
     motiskoReleaseApiVersionMatch: expectedVersion ? releaseApi?.version === expectedVersion : Boolean(releaseApi?.version),
     motiskoReleaseApiSha256Match: hasValidShaFormat && shaMatchesExpected,
     motiskoReleaseApiPlayLive: Boolean(releaseApi?.playStoreLive),
+    motiskoShowcasePageOk:
+      showcaseStatus === 200 &&
+      showcaseHtml.includes('Get it on Google Play') &&
+      showcaseHtml.includes('com.motiskoventures.gameday') &&
+      showcaseHasVersion,
     motiskoApkRedirectOk:
       (apkRedirectStatus === 307 || apkRedirectStatus === 308) &&
       apkRedirectLocation.includes('releases/latest/download/MFL-GameDay-Live.apk') &&
@@ -744,6 +752,7 @@ export function evaluateSmokeGate({
     checks.motiskoReleaseApiVersionMatch &&
     checks.motiskoReleaseApiSha256Match &&
     checks.motiskoReleaseApiPlayLive &&
+    checks.motiskoShowcasePageOk &&
     checks.motiskoApkRedirectOk;
 
   return {
@@ -799,11 +808,12 @@ async function cmdSmoke(flags) {
   const expectedVersionCode = flags['version-code'] ? String(flags['version-code']) : null;
   const explicitSha = flags.sha256 ? String(flags.sha256).toLowerCase() : null;
 
-  const [{ accessToken }, publicStore, releaseApiResp, apkRedirectResp, storeHtmlResp, expectedSha256] =
+  const [{ accessToken }, publicStore, releaseApiResp, showcaseResp, apkRedirectResp, storeHtmlResp, expectedSha256] =
     await Promise.all([
       mintGooglePlayAccessToken(),
       checkPublicPlayStoreLive(),
       fetch('https://www.motisko.com/api/gameday/release'),
+      fetch('https://www.motisko.com/gameday'),
       fetch('https://www.motisko.com/gameday/apk', { redirect: 'manual' }),
       fetch(`${PUBLIC_STORE_URL}&hl=en_US&gl=US`),
       explicitSha ? Promise.resolve(explicitSha) : fetchPublishedGithubReleaseSha256(expectedVersion)
@@ -813,6 +823,7 @@ async function cmdSmoke(flags) {
     playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/production`)
   );
   const releaseApi = await releaseApiResp.json();
+  const showcaseHtml = await showcaseResp.text();
   const storeHtml = await storeHtmlResp.text();
   const redirectLoc = apkRedirectResp.headers.get('location') || '';
   const apkHeadResp = redirectLoc ? await fetch(redirectLoc, { method: 'HEAD', redirect: 'follow' }) : { ok: false };
@@ -824,6 +835,8 @@ async function cmdSmoke(flags) {
     expectedVersionCode,
     expectedSha256,
     releaseApi,
+    showcaseStatus: showcaseResp.status,
+    showcaseHtml,
     apkRedirectStatus: apkRedirectResp.status,
     apkRedirectLocation: redirectLoc,
     apkTargetHttpOk: apkHeadResp.ok,

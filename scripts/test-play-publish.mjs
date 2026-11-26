@@ -156,8 +156,9 @@ async function runTests() {
   assert.equal(completedFromStaged.releases[0].status, 'completed');
   assert.equal('userFraction' in completedFromStaged.releases[0], false);
 
-  // 5b. Smoke gate rejects halted releases and mismatched SHA-256 checksums
+  // 5b. Smoke gate rejects halted releases, mismatched SHA-256 checksums, and stale /gameday showcase HTML
   const validSha = '002f0ad8b4ac09e790d7b2affb9aa159d331ce27b8b9ef37a783aa4ccfa10c68';
+  const validShowcase = '<a href="https://play.google.com/store/apps/details?id=com.motiskoventures.gameday">Get it on Google Play</a><span>v1.2.3</span>';
   const haltedSmoke = evaluateSmokeGate({
     publicStoreLive: true,
     prodReleases: [{ versionCodes: ['7'], status: 'halted' }],
@@ -165,6 +166,8 @@ async function runTests() {
     expectedVersionCode: '7',
     expectedSha256: validSha,
     releaseApi: { version: 'v1.2.3', sha256: validSha, playStoreLive: true },
+    showcaseStatus: 200,
+    showcaseHtml: validShowcase,
     apkRedirectStatus: 307,
     apkRedirectLocation: 'https://github.com/GinoMotisko/mfl-gameday-live/releases/latest/download/MFL-GameDay-Live.apk',
     apkTargetHttpOk: true,
@@ -180,6 +183,8 @@ async function runTests() {
     expectedVersionCode: '7',
     expectedSha256: validSha,
     releaseApi: { version: 'v1.2.3', sha256: 'f'.repeat(64), playStoreLive: true },
+    showcaseStatus: 200,
+    showcaseHtml: validShowcase,
     apkRedirectStatus: 307,
     apkRedirectLocation: 'https://github.com/GinoMotisko/mfl-gameday-live/releases/latest/download/MFL-GameDay-Live.apk',
     apkTargetHttpOk: true,
@@ -187,6 +192,23 @@ async function runTests() {
   });
   assert.equal(badShaSmoke.verdict, 'FAIL');
   assert.equal(badShaSmoke.checks.motiskoReleaseApiSha256Match, false);
+
+  const staleShowcaseSmoke = evaluateSmokeGate({
+    publicStoreLive: true,
+    prodReleases: [{ versionCodes: ['7'], status: 'completed' }],
+    expectedVersion: 'v1.2.3',
+    expectedVersionCode: '7',
+    expectedSha256: validSha,
+    releaseApi: { version: 'v1.2.3', sha256: validSha, playStoreLive: true },
+    showcaseStatus: 200,
+    showcaseHtml: '<div>v1.2.2 In Final Review</div>',
+    apkRedirectStatus: 307,
+    apkRedirectLocation: 'https://github.com/GinoMotisko/mfl-gameday-live/releases/latest/download/MFL-GameDay-Live.apk',
+    apkTargetHttpOk: true,
+    storeHtml: '1.2.3'
+  });
+  assert.equal(staleShowcaseSmoke.verdict, 'FAIL');
+  assert.equal(staleShowcaseSmoke.checks.motiskoShowcasePageOk, false);
 
   // 6. discoverStoreGraphics discovers generated kit subdirectories (phone, 7in, 10in, foldable)
   const tmpKit = fs.mkdtempSync(path.join(os.tmpdir(), 'play-kit-test-'));
