@@ -127,8 +127,8 @@ async function buildFeatureGraphic(destPath) {
     <!-- Headline -->
     <text x="54" y="152" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="56" font-weight="900" fill="#F8FAFC">GameDay Live</text>
     <text x="54" y="206" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="23" font-weight="700" fill="#FBBF24">Hear Every Big Play. Rule Every League.</text>
-    <text x="54" y="252" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="17.5" font-weight="500" fill="#CBD5E1">Spoken play-by-play, linear stadium fields, Win %</text>
-    <text x="54" y="279" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="17.5" font-weight="500" fill="#CBD5E1">&amp; multi-league Best Ball — Phone, Fold, Tablet &amp; Desktop.</text>
+    <text x="54" y="250" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="16" font-weight="500" fill="#CBD5E1">Spoken play-by-play, linear stadium fields, Win %</text>
+    <text x="54" y="276" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="16" font-weight="500" fill="#CBD5E1">&amp; Best Ball — Phone, Fold, Tablet &amp; Desktop.</text>
 
     <!-- Feature badges -->
     <rect x="58" y="312" width="176" height="32" rx="8" fill="#132640" stroke="#334155" stroke-width="1"/>
