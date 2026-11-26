@@ -6,10 +6,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   EXPECTED_CERT_SHA256,
+  buildHaltTrackUpdate,
+  buildSetRolloutTrackUpdate,
+  buildTrackReleaseUpdate,
   discoverStoreGraphics,
   enforceReviewQueueSafetyGate,
+  evaluateSmokeGate,
   parseArgs,
+  validateRolloutFraction,
   verifyAabBundleIntegrity,
+  verifyAabStructure,
   verifyPng24BitRgbBuffer,
   withPlayAppEdit
 } from './play-publish.mjs';
@@ -88,7 +94,123 @@ async function runTests() {
   assert.match(callsCommit[1], /^POST .*\/edits\/edit-123:validate$/);
   assert.match(callsCommit[2], /^POST .*\/edits\/edit-123:commit$/);
 
-  // 4b. discoverStoreGraphics discovers generated kit subdirectories (phone, 7in, 10in, foldable)
+  // 5. Track-release builders: full rollout, partial rollout baseline retention, set-rollout, and halt-release guards
+  assert.throws(() => validateRolloutFraction('0'), /Invalid --rollout/);
+  assert.throws(() => validateRolloutFraction('1.5'), /Invalid --rollout/);
+
+  const staged = buildTrackReleaseUpdate({
+    track: 'production',
+    existingReleases: [{ name: '6 (1.2.2)', versionCodes: ['6'], status: 'completed' }],
+    versionCodes: [7],
+    rollout: 0.2,
+    releaseName: '7 (1.2.3)',
+    notesText: 'Staged canary'
+  });
+  assert.equal(staged.releases.length, 2);
+  assert.deepEqual(staged.releases[0].versionCodes, ['6']);
+  assert.equal(staged.releases[0].status, 'completed');
+  assert.deepEqual(staged.releases[1].versionCodes, ['7']);
+  assert.equal(staged.releases[1].status, 'inProgress');
+  assert.equal(staged.releases[1].userFraction, 0.2);
+
+  const halted = buildHaltTrackUpdate({
+    track: 'production',
+    existingReleases: staged.releases,
+    versionCode: '7'
+  });
+  assert.equal(halted.releases[1].status, 'halted');
+  assert.equal('userFraction' in halted.releases[1], false);
+
+  // Google Play API v3 forbids halting a 100% completed release — verify fail-fast operator guard
+  assert.throws(
+    () =>
+      buildHaltTrackUpdate({
+        track: 'production',
+        existingReleases: [{ versionCodes: ['7'], status: 'completed' }],
+        versionCode: '7'
+      }),
+    /Cannot API-halt versionCode 7/
+  );
+
+  // set-rollout requires an explicit rollout fraction (never silently defaults to 1.0)
+  assert.throws(
+    () =>
+      buildSetRolloutTrackUpdate({
+        track: 'production',
+        existingReleases: staged.releases,
+        versionCode: '7',
+        rollout: undefined
+      }),
+    /explicit --rollout/
+  );
+
+  // Expand staged 20% rollout to 100% completed via set-rollout
+  const completedFromStaged = buildSetRolloutTrackUpdate({
+    track: 'production',
+    existingReleases: staged.releases,
+    versionCode: '7',
+    rollout: 1.0
+  });
+  assert.equal(completedFromStaged.releases.length, 1);
+  assert.deepEqual(completedFromStaged.releases[0].versionCodes, ['7']);
+  assert.equal(completedFromStaged.releases[0].status, 'completed');
+  assert.equal('userFraction' in completedFromStaged.releases[0], false);
+
+  // 5b. Smoke gate rejects halted releases, mismatched SHA-256 checksums, and stale /gameday showcase HTML
+  const validSha = '002f0ad8b4ac09e790d7b2affb9aa159d331ce27b8b9ef37a783aa4ccfa10c68';
+  const validShowcase = '<a href="https://play.google.com/store/apps/details?id=com.motiskoventures.gameday">Get it on Google Play</a><span>v1.2.3</span>';
+  const haltedSmoke = evaluateSmokeGate({
+    publicStoreLive: true,
+    prodReleases: [{ versionCodes: ['7'], status: 'halted' }],
+    expectedVersion: 'v1.2.3',
+    expectedVersionCode: '7',
+    expectedSha256: validSha,
+    releaseApi: { version: 'v1.2.3', sha256: validSha, playStoreLive: true },
+    showcaseStatus: 200,
+    showcaseHtml: validShowcase,
+    apkRedirectStatus: 307,
+    apkRedirectLocation: 'https://github.com/GinoMotisko/mfl-gameday-live/releases/latest/download/MFL-GameDay-Live.apk',
+    apkTargetHttpOk: true,
+    storeHtml: '1.2.3'
+  });
+  assert.equal(haltedSmoke.verdict, 'FAIL');
+  assert.equal(haltedSmoke.checks.playProductionTrackActive, false);
+
+  const badShaSmoke = evaluateSmokeGate({
+    publicStoreLive: true,
+    prodReleases: [{ versionCodes: ['7'], status: 'completed' }],
+    expectedVersion: 'v1.2.3',
+    expectedVersionCode: '7',
+    expectedSha256: validSha,
+    releaseApi: { version: 'v1.2.3', sha256: 'f'.repeat(64), playStoreLive: true },
+    showcaseStatus: 200,
+    showcaseHtml: validShowcase,
+    apkRedirectStatus: 307,
+    apkRedirectLocation: 'https://github.com/GinoMotisko/mfl-gameday-live/releases/latest/download/MFL-GameDay-Live.apk',
+    apkTargetHttpOk: true,
+    storeHtml: '1.2.3'
+  });
+  assert.equal(badShaSmoke.verdict, 'FAIL');
+  assert.equal(badShaSmoke.checks.motiskoReleaseApiSha256Match, false);
+
+  const staleShowcaseSmoke = evaluateSmokeGate({
+    publicStoreLive: true,
+    prodReleases: [{ versionCodes: ['7'], status: 'completed' }],
+    expectedVersion: 'v1.2.3',
+    expectedVersionCode: '7',
+    expectedSha256: validSha,
+    releaseApi: { version: 'v1.2.3', sha256: validSha, playStoreLive: true },
+    showcaseStatus: 200,
+    showcaseHtml: '<div>v1.2.2 In Final Review</div>',
+    apkRedirectStatus: 307,
+    apkRedirectLocation: 'https://github.com/GinoMotisko/mfl-gameday-live/releases/latest/download/MFL-GameDay-Live.apk',
+    apkTargetHttpOk: true,
+    storeHtml: '1.2.3'
+  });
+  assert.equal(staleShowcaseSmoke.verdict, 'FAIL');
+  assert.equal(staleShowcaseSmoke.checks.motiskoShowcasePageOk, false);
+
+  // 6. discoverStoreGraphics discovers generated kit subdirectories (phone, 7in, 10in, foldable)
   const tmpKit = fs.mkdtempSync(path.join(os.tmpdir(), 'play-kit-test-'));
   try {
     const rgb24 = buildMockPngHeader({ width: 1080, height: 1920, colorType: 2 });
@@ -109,17 +231,22 @@ async function runTests() {
     fs.rmSync(tmpKit, { recursive: true, force: true });
   }
 
-  // 5. If local signed PlayStore AAB + keystore.properties exist, verify RSA-2048 cert + embedded R8 proguard.map
+  // 7. Keyless CI & Local AAB structure + embedded R8 proguard.map check (plus RSA-2048 cert when signed locally)
   const localAab = path.join(REPO_ROOT, 'app', 'build', 'outputs', 'bundle', 'playStoreRelease', 'app-playStore-release.aab');
   const localKeystoreProps = path.join(REPO_ROOT, 'keystore.properties');
-  if (fs.existsSync(localAab) && fs.existsSync(localKeystoreProps)) {
-    const info = verifyAabBundleIntegrity(localAab);
-    assert.equal(info.certSha256, EXPECTED_CERT_SHA256);
-    assert.equal(info.hasEmbeddedProguardMap, true);
-    assert.equal(typeof info.hasNativeDebugSymbols, 'boolean');
+  if (fs.existsSync(localAab)) {
+    const struct = verifyAabStructure(localAab);
+    assert.equal(struct.hasEmbeddedProguardMap, true);
+    assert.ok(struct.sizeBytes >= 500_000);
+    if (fs.existsSync(localKeystoreProps)) {
+      const info = verifyAabBundleIntegrity(localAab);
+      assert.equal(info.certSha256, EXPECTED_CERT_SHA256);
+      assert.equal(info.hasEmbeddedProguardMap, true);
+      assert.equal(typeof info.hasNativeDebugSymbols, 'boolean');
+    }
   }
 
-  console.log('[test-play-publish] ALL 5 SECURITY & TRANSACTION GATE TESTS PASSED');
+  console.log('[test-play-publish] ALL 7 SECURITY, TRACK-ROLLOUT & BUNDLE GATE TESTS PASSED');
 }
 
 runTests().catch((err) => {

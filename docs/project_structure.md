@@ -4,6 +4,9 @@
 
 ```text
 MFL-GameDay-Android-app/
+├── .github/
+│   └── workflows/
+│       └── ci.yml                       # Keyless GitHub Actions CI (unit, MockWebServer, lintVital, R8 & Play gates)
 ├── app/
 │   ├── build.gradle.kts                 # Android app config (minSdk 31, targetSdk 36, Compose, OkHttp, Serialization, Coil)
 │   └── src/
@@ -74,7 +77,8 @@ MFL-GameDay-Android-app/
 ├── gradle/
 │   └── libs.versions.toml               # Version catalog
 ├── scripts/
-│   ├── verify.cmd                       # Single local/CI verification entrypoint (+ Play API gate tests)
+│   ├── verify.cmd                       # Single Windows verification entrypoint (+ Play API gate tests)
+│   ├── verify.sh                        # Single Linux/macOS/CI verification entrypoint (parity with verify.cmd)
 │   ├── play-publish.mjs                 # Zero-dependency Google Play API v3 + Reporting CLI (1Password GameDay vault + DPAPI)
 │   ├── test-play-publish.mjs            # Automated unit tests for 24-bit RGB, AAB SHA-256, review-queue lockout & AppEdit gates
 │   ├── build-play-store-assets.mjs      # Repeatable 24-bit RGB Play Store graphic & screenshot compositor
