@@ -396,7 +396,12 @@ async function cmdReviews() {
 
 async function cmdUploadInternal(flags) {
   const aabPath = path.resolve(flags.aab || 'app/build/outputs/bundle/playStoreRelease/app-playStore-release.aab');
+  const targetTrack = String(flags.track || 'internal');
   const isDryRun = Boolean(flags['dry-run']);
+  const rollout = flags.rollout !== undefined ? Number(flags.rollout) : 1.0;
+  if (Number.isNaN(rollout) || rollout <= 0 || rollout > 1) {
+    throw new Error(`Invalid --rollout=${flags.rollout}; must be in (0.0, 1.0]`);
+  }
   const notes = String(flags.notes || 'Bug fixes, audio engine improvements, and UI polish.');
 
   const integrity = verifyAabBundleIntegrity(aabPath);
@@ -421,20 +426,37 @@ async function cmdUploadInternal(flags) {
       }
     );
     const versionCode = String(bundle.versionCode);
-    await playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/internal`, {
+    const existingTrack =
+      rollout < 1.0
+        ? await playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/${targetTrack}`).catch(() => ({
+            releases: []
+          }))
+        : { releases: [] };
+    const preservedCompleted =
+      rollout < 1.0
+        ? (existingTrack.releases || []).filter(
+            (r) => r.status === 'completed' && !(r.versionCodes || []).map(String).includes(versionCode)
+          )
+        : [];
+    const releasePayload = {
+      name: `${versionCode} (${flags['version-name'] || 'release'})`,
+      versionCodes: [versionCode],
+      status: rollout < 1.0 ? 'inProgress' : 'completed',
+      ...(rollout < 1.0 ? { userFraction: rollout } : {}),
+      releaseNotes: [{ language: 'en-US', text: notes }]
+    };
+    await playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/${targetTrack}`, {
       method: 'PUT',
       body: {
-        track: 'internal',
-        releases: [
-          {
-            versionCodes: [versionCode],
-            status: 'completed',
-            releaseNotes: [{ language: 'en-US', text: notes }]
-          }
-        ]
+        track: targetTrack,
+        releases: [...preservedCompleted, releasePayload]
       }
     });
-    return { mode: isDryRun ? 'DRY_RUN_VALIDATED_AND_DISCARDED' : 'COMMITTED_TO_INTERNAL', bundle };
+    return {
+      mode: isDryRun ? 'DRY_RUN_VALIDATED_AND_DISCARDED' : `COMMITTED_TO_${targetTrack.toUpperCase()}`,
+      track: targetTrack,
+      bundle
+    };
   });
 
   console.log(JSON.stringify(outcome, null, 2));
@@ -724,6 +746,7 @@ async function main() {
       break;
     }
     case 'upload-internal':
+    case 'upload-release':
       await cmdUploadInternal(flags);
       break;
     case 'promote':

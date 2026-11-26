@@ -48,6 +48,12 @@ Whenever publishing a new GitHub Release (`vX.Y.Z` marked `--latest`):
 1. Upload `MFL-GameDay-Live.apk`, `MFL-GameDay-Live-vX.Y.Z.apk`, and `MFL-GameDay-Live-vX.Y.Z.apk.sha256` (exact format: `<64-hex-sha256>  MFL-GameDay-Live.apk`).
 2. `https://www.motisko.com/gameday/apk` redirects (`HTTP 307`) to `releases/latest/download/MFL-GameDay-Live.apk`, and `https://www.motisko.com/api/gameday/release` reads the latest release version & `.sha256` asset dynamically, while `GameDayShowcase.tsx` holds the current fallback version + SHA-256. Update `GameDayShowcase.tsx` fallback constants when bumping major/minor releases so SSR HTML matches immediately.
 3. Stage the matching `GameDay-Live-PlayStore-vX.Y.Z.aab` and `mapping-playStoreRelease-vX.Y.Z.txt` into `C:/Users/motis/OneDrive/Motisko Ventures LLC/Google-Play-Console-Kit/2-App-Bundle-And-Store-Graphics/`.
+4. **Standing Post-Release Store & Showcase Smoke Regression (Mandatory After Every Store Release)**:
+   - Immediately after every Google Play & GitHub Release push, execute a post-release smoke regression verifying:
+     1) `node scripts/play-publish.mjs status` confirms the latest `versionCode` (`vX.Y.Z`) is active on `production` (`status: "completed"` or staged `inProgress`) and `publicStoreRetailLive === true` (`HTTP 200`).
+     2) `https://www.motisko.com/api/gameday/release` returns `"version": "vX.Y.Z"`, matching `sha256`, and `"playStoreLive": true`.
+     3) `https://www.motisko.com/gameday/apk` returns `HTTP 307` redirecting to `releases/latest/download/MFL-GameDay-Live.apk`, and `https://www.motisko.com/gameday` renders the updated version & Google Play CTA cleanly.
+     4) Verify `https://play.google.com/store/apps/details?id=com.motiskoventures.gameday` displays the new `vX.Y.Z` release notes/version once Google's post-submission scan propagates (if still propagating, note exact Play API `tracks.production` state and recommend `/schedule` to confirm retail propagation).
 
 ---
 

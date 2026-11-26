@@ -2,10 +2,11 @@
 
 **Live Spoken NFL & MyFantasyLeague Broadcast Engine for Phones, Foldables & Tablets**
 
-[![Download APK](https://img.shields.io/badge/Download_APK-v1.0.0_(Signed_Release)-d4ff78?style=for-the-badge&logo=android&logoColor=090f10)](https://github.com/GinoMotisko/mfl-gameday-live/releases/latest)
+[![Google Play](https://img.shields.io/badge/Google_Play-GameDay_Live_(v1.2.3)-34a853?style=for-the-badge&logo=google-play&logoColor=white)](https://play.google.com/store/apps/details?id=com.motiskoventures.gameday)
+[![Download Direct Pro APK](https://img.shields.io/badge/Direct_Pro_APK-v1.2.3_(Signed_Release)-d4ff78?style=for-the-badge&logo=android&logoColor=090f10)](https://github.com/GinoMotisko/mfl-gameday-live/releases/latest)
 [![Product Showcase](https://img.shields.io/badge/Showcase_&_QR_Install-motisko.com%2Fgameday-91e3db?style=for-the-badge)](https://www.motisko.com/gameday)
 
-Built by **[Gino Motisko](https://www.motisko.com)** (`Applied AI & Practice Leadership`). Inspired by MyFantasyLeague's classic 15-year Windows `GameDay` desktop announcer and [`darcuri/gameannouncer`](https://github.com/darcuri/gameannouncer), re-architected from the ground up in **Kotlin + Jetpack Compose** for modern Android 12L–17 devices (**Samsung Galaxy Tab S10+ / S7**, **Google Pixel Fold**, compact 8" tablets, and Android phones).
+Built by **[Gino Motisko](https://www.motisko.com)** (`Motisko Ventures LLC` · `Applied AI & Practice Leadership`). Inspired by MyFantasyLeague's classic 15-year Windows `GameDay` desktop announcer and [`darcuri/gameannouncer`](https://github.com/darcuri/gameannouncer), re-architected from the ground up in **Kotlin + Jetpack Compose** for modern Android 12–16+ devices (**Samsung Galaxy Tab S10+ / S7**, **Google Pixel Fold**, compact 8" tablets, and Android phones).
 
 ---
 
@@ -19,11 +20,10 @@ You **do not** need a MyFantasyLeague team or any login to use GameDay Live:
 
 ---
 
-## Install on Any Android Phone or Tablet (30 Seconds)
+## Install on Any Android Phone, Foldable, or Tablet
 
-1. **Download the Signed Release APK**: Grab [`MFL-GameDay-Live-v1.0.0.apk`](https://github.com/GinoMotisko/mfl-gameday-live/releases/latest/download/MFL-GameDay-Live-v1.0.0.apk) directly on your Android device (or scan the QR code at **[motisko.com/gameday](https://www.motisko.com/gameday)**).
-2. **Allow Install Source (One-Time)**: Open the downloaded `.apk`. If Android prompts for *Install unknown apps*, toggle **Allow from this source** for your browser or Files app.
-3. **Play Protect Prompt**: Because this open-source build is distributed directly via GitHub Releases outside the Play Store, if Google Play Protect displays *Unrecognized app developer*, tap **More details → Install anyway**. Every release is signed with the same permanent RSA-2048 release certificate so future updates install cleanly over the top without losing your settings.
+- **Google Play Store (Recommended — Automatic Updates)**: Install **[GameDay Live: Football Audio](https://play.google.com/store/apps/details?id=com.motiskoventures.gameday)** (`com.motiskoventures.gameday`) featuring original 3D claymation team mascots, 644+ OTA clay player busts, and pulsing Red Zone rings.
+- **Direct Pro Edition APK (Optional Side-by-Side Power-User Build)**: Grab [`MFL-GameDay-Live.apk`](https://github.com/GinoMotisko/mfl-gameday-live/releases/latest/download/MFL-GameDay-Live.apk) (`com.mflgameday.live`, or scan the Pro APK QR code at **[motisko.com/gameday](https://www.motisko.com/gameday)**) for full 32-team shield logos and player headshots. Because the two editions use separate `applicationId` values, they can be installed side-by-side.
 
 ---
 
@@ -56,6 +56,6 @@ Requires JDK 17+ (JDK 21 recommended) and Android SDK 36:
 scripts\verify.cmd
 ```
 
-Runs pure engine unit tests, `MockWebServer` MFL + ESPN pipeline integration tests, secret-redaction & logo contract tests, Android Lint, and builds both `app-debug.apk` and R8-shrunk `app-release.apk`.
+Runs pure engine unit tests, `MockWebServer` MFL + ESPN + OTA Claymation delta manifest integration tests, Play API pre-flight unit tests, secret-redaction & logo contract tests, Android Lint (`directDebug` + `playStoreRelease`), and builds both signed `app-direct-release.apk` and R8-shrunk `app-playStore-release.aab`.
 
 Architecture and repository layout documentation live in [`docs/architecture_map.md`](docs/architecture_map.md) and [`docs/project_structure.md`](docs/project_structure.md).
