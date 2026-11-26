@@ -487,7 +487,7 @@ fun SettingsAndVoicesScreen(
 
         SettingSwitchRow(
           title = "Run Uninterrupted Background Service",
-          subtitle = "Keeps live NFL polling & spoken announcements active when screen is off or in other apps",
+          subtitle = "Keeps live polling & spoken calls active during game windows (90m pre-kickoff through Final); auto-sleeps off-hours",
           checked = settings.runInBackgroundService,
           onCheckedChange = { v -> coordinator.updateSettings { it.copy(runInBackgroundService = v) } }
         )

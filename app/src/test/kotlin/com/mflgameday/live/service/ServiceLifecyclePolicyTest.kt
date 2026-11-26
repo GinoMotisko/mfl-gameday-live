@@ -7,10 +7,14 @@ import com.mflgameday.live.data.RawMflMatchup
 import com.mflgameday.live.data.RawMflPlayerScore
 import com.mflgameday.live.diagnostics.TelemetrySnapshot
 import com.mflgameday.live.engine.BestBallAndPaceCalculator
+import com.mflgameday.live.model.AnnouncementScope
 import com.mflgameday.live.model.FantasyPlayer
-import com.mflgameday.live.model.LeagueConfig
-import com.mflgameday.live.model.NflTeam
 import com.mflgameday.live.model.GameDaySettings
+import com.mflgameday.live.model.GamePhase
+import com.mflgameday.live.model.LeagueConfig
+import com.mflgameday.live.model.NflGameState
+import com.mflgameday.live.model.NflSide
+import com.mflgameday.live.model.NflTeam
 import com.mflgameday.live.model.OperatingMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -75,6 +79,8 @@ class ServiceLifecyclePolicyTest {
 
   @Test
   fun serviceAlreadyInForeground_neverReTriggersStartForegroundService() {
+    val now = 1_700_000_000_000L
+    val liveGames = listOf(sampleGame("G1", GamePhase.LIVE))
     val activeSettings = GameDaySettings(
       operatingMode = OperatingMode.MFL_AND_NFL_LIVE,
       runInBackgroundService = true
@@ -83,7 +89,9 @@ class ServiceLifecyclePolicyTest {
       ServiceLifecyclePolicy.shouldDispatchStartForegroundService(
         settings = activeSettings,
         isBroadcastPaused = false,
-        isServiceAlreadyForeground = false
+        isServiceAlreadyForeground = false,
+        nflGames = liveGames,
+        nowMillis = now
       )
     )
     assertFalse(
@@ -91,7 +99,9 @@ class ServiceLifecyclePolicyTest {
       ServiceLifecyclePolicy.shouldDispatchStartForegroundService(
         settings = activeSettings,
         isBroadcastPaused = false,
-        isServiceAlreadyForeground = true
+        isServiceAlreadyForeground = true,
+        nflGames = liveGames,
+        nowMillis = now
       )
     )
     assertFalse(
@@ -99,10 +109,231 @@ class ServiceLifecyclePolicyTest {
       ServiceLifecyclePolicy.shouldDispatchStartForegroundService(
         settings = activeSettings,
         isBroadcastPaused = true,
-        isServiceAlreadyForeground = false
+        isServiceAlreadyForeground = false,
+        nflGames = liveGames,
+        nowMillis = now
       )
     )
   }
+
+  @Test
+  fun offHoursAndCompletedSlates_neverRunForegroundServiceOrBackgroundPoll() {
+    val now = 1_700_000_000_000L
+    val settings = GameDaySettings(
+      operatingMode = OperatingMode.MFL_AND_NFL_LIVE,
+      runInBackgroundService = true
+    )
+
+    // 1. Cold start before scoreboard loads: never pop a foreground notification prematurely
+    assertFalse(
+      ServiceLifecyclePolicy.shouldRunForegroundService(
+        settings = settings,
+        isBroadcastPaused = false,
+        nflGames = emptyList(),
+        nowMillis = now
+      )
+    )
+
+    // 2. Thursday 8:28 AM when kickoff is 4 hours away (12:30 PM): outside 90m window -> NO service & NO background poll!
+    val fourHoursAway = listOf(
+      sampleGame("G_THU", GamePhase.SCHEDULED, kickoffEpochMillis = now + 4L * 60L * 60_000L)
+    )
+    assertFalse(
+      ServiceLifecyclePolicy.isWithinActiveBroadcastWindow(
+        operatingMode = OperatingMode.MFL_AND_NFL_LIVE,
+        nflGames = fourHoursAway,
+        nowMillis = now
+      )
+    )
+    assertFalse(
+      ServiceLifecyclePolicy.shouldRunForegroundService(
+        settings = settings,
+        isBroadcastPaused = false,
+        nflGames = fourHoursAway,
+        nowMillis = now
+      )
+    )
+    assertFalse(
+      "Background polling must halt completely when outside the 90-minute game window",
+      ServiceLifecyclePolicy.shouldKeepPollingInBackground(
+        settings = settings,
+        isBroadcastPaused = false,
+        isAppInForeground = false,
+        nflGames = fourHoursAway,
+        nowMillis = now
+      )
+    )
+    assertTrue(
+      "Foreground UI session may still refresh while open on screen",
+      ServiceLifecyclePolicy.shouldKeepPollingInBackground(
+        settings = settings,
+        isBroadcastPaused = false,
+        isAppInForeground = true,
+        nflGames = fourHoursAway,
+        nowMillis = now
+      )
+    )
+
+    // 3. All games FINAL after Monday Night Football: auto-shutdown once Final call finishes speaking
+    val allFinal = listOf(sampleGame("G_MNF", GamePhase.FINAL))
+    assertFalse(
+      ServiceLifecyclePolicy.shouldRunForegroundService(
+        settings = settings,
+        isBroadcastPaused = false,
+        nflGames = allFinal,
+        nowMillis = now,
+        isSpeakingNow = false
+      )
+    )
+    assertTrue(
+      "Keep FGS alive for the few seconds TTS finishes speaking the Final Score call",
+      ServiceLifecyclePolicy.shouldRunForegroundService(
+        settings = settings,
+        isBroadcastPaused = false,
+        nflGames = allFinal,
+        nowMillis = now,
+        isSpeakingNow = true
+      )
+    )
+
+    // 4. Inside 90-minute pregame window (e.g. 45m before kickoff, or 40m Sunday late -> SNF gap): active!
+    val pregame45m = listOf(
+      sampleGame("G_EARLY", GamePhase.FINAL),
+      sampleGame("G_SNF", GamePhase.SCHEDULED, kickoffEpochMillis = now + 45L * 60_000L)
+    )
+    assertTrue(
+      ServiceLifecyclePolicy.shouldRunForegroundService(
+        settings = settings,
+        isBroadcastPaused = false,
+        nflGames = pregame45m,
+        nowMillis = now
+      )
+    )
+    assertTrue(
+      ServiceLifecyclePolicy.shouldKeepPollingInBackground(
+        settings = settings,
+        isBroadcastPaused = false,
+        isAppInForeground = false,
+        nflGames = pregame45m,
+        nowMillis = now
+      )
+    )
+
+    // 5. Delayed kickoff (scheduled 20m ago, still SCHEDULED): stays active within 2h weather-delay grace
+    val weatherDelayed = listOf(
+      sampleGame("G_DELAY", GamePhase.SCHEDULED, kickoffEpochMillis = now - 20L * 60_000L)
+    )
+    assertTrue(
+      ServiceLifecyclePolicy.isWithinActiveBroadcastWindow(
+        operatingMode = OperatingMode.MFL_AND_NFL_LIVE,
+        nflGames = weatherDelayed,
+        nowMillis = now
+      )
+    )
+  }
+
+  @Test
+  fun notificationSummary_suppressesStaleAndSimulatedPlaysWhenNoGamesAreLive() {
+    val now = 1_700_000_000_000L
+    // Simulated Baker Mayfield play or 6-hour-old play while 0 games are live must NOT show on shade
+    val pregameSummary = ServiceLifecyclePolicy.buildNotificationSummary(
+      appBrand = "MFL GameDay Live",
+      operatingMode = OperatingMode.MFL_AND_NFL_LIVE,
+      currentWeek = 12,
+      muted = false,
+      scope = AnnouncementScope.ALL_NFL,
+      liveGamesCount = 0,
+      matchupHeadline = "Beerfest: 0 – 0 vs Ditkaheads",
+      latestPlaySpokenText = "Touchdown, Tampa Bay Buccaneers! Baker Mayfield, 94 yard touchdown pass to Chris Godwin!",
+      latestPlayEventId = "sim_tb_td_12345",
+      latestPlayTimestampMillis = now - 60_000L,
+      nowMillis = now
+    )
+    assertEquals("Beerfest: 0 – 0 vs Ditkaheads", pregameSummary.title)
+    assertEquals("Standing by for kickoff · Scope: ${AnnouncementScope.ALL_NFL.shortLabel}", pregameSummary.body)
+
+    val staleRealPlaySummary = ServiceLifecyclePolicy.buildNotificationSummary(
+      appBrand = "MFL GameDay Live",
+      operatingMode = OperatingMode.MFL_AND_NFL_LIVE,
+      currentWeek = 12,
+      muted = false,
+      scope = AnnouncementScope.MY_GAMES,
+      liveGamesCount = 0,
+      matchupHeadline = "Beerfest: 44 – 13 vs Ditkaheads",
+      latestPlaySpokenText = "Touchdown, Tampa Bay Buccaneers! Baker Mayfield 5 yard rush.",
+      latestPlayEventId = "401671_play_99_TOUCHDOWN",
+      latestPlayTimestampMillis = now - 3L * 60L * 60_000L, // 3 hours old, 0 live games
+      nowMillis = now
+    )
+    assertEquals("Standing by for kickoff · Scope: My Games", staleRealPlaySummary.body)
+
+    // Live game active with real play -> shows live spoken play & identical signature deduplicates
+    val liveSummary1 = ServiceLifecyclePolicy.buildNotificationSummary(
+      appBrand = "MFL GameDay Live",
+      operatingMode = OperatingMode.MFL_AND_NFL_LIVE,
+      currentWeek = 12,
+      muted = false,
+      scope = AnnouncementScope.ALL_NFL,
+      liveGamesCount = 3,
+      matchupHeadline = "Beerfest: 44 – 13 vs Ditkaheads",
+      latestPlaySpokenText = "Touchdown, Detroit Lions! Jahmyr Gibbs 12 yard rush.",
+      latestPlayEventId = "401671_play_105_TOUCHDOWN",
+      latestPlayTimestampMillis = now - 120_000L,
+      nowMillis = now
+    )
+    val liveSummary2 = liveSummary1.copy()
+    assertEquals("Touchdown, Detroit Lions! Jahmyr Gibbs 12 yard rush.", liveSummary1.body)
+    assertEquals(liveSummary1.signature, liveSummary2.signature)
+    assertTrue(ServiceLifecyclePolicy.isSimulatedPlayId("sim_tb_td_999"))
+    assertTrue(ServiceLifecyclePolicy.isSimulatedPlayId("seed_3"))
+    assertFalse(ServiceLifecyclePolicy.isSimulatedPlayId("401671_play_105_TOUCHDOWN"))
+
+    // Poll interval pacing: live = user interval, pregame 45m = gentle 600s, imminent <60s = 30s, all-final = 900s
+    assertEquals(
+      30,
+      ServiceLifecyclePolicy.computePollWaitSeconds(
+        pollIntervalSeconds = 30,
+        nflGames = listOf(sampleGame("G1", GamePhase.LIVE)),
+        nowMillis = now
+      )
+    )
+    assertEquals(
+      600,
+      ServiceLifecyclePolicy.computePollWaitSeconds(
+        pollIntervalSeconds = 30,
+        nflGames = listOf(sampleGame("G2", GamePhase.SCHEDULED, kickoffEpochMillis = now + 45L * 60_000L)),
+        nowMillis = now
+      )
+    )
+    assertEquals(
+      30,
+      ServiceLifecyclePolicy.computePollWaitSeconds(
+        pollIntervalSeconds = 30,
+        nflGames = listOf(sampleGame("G3", GamePhase.SCHEDULED, kickoffEpochMillis = now + 30_000L)),
+        nowMillis = now
+      )
+    )
+    assertEquals(
+      900,
+      ServiceLifecyclePolicy.computePollWaitSeconds(
+        pollIntervalSeconds = 30,
+        nflGames = listOf(sampleGame("G4", GamePhase.FINAL)),
+        nowMillis = now
+      )
+    )
+  }
+
+  private fun sampleGame(
+    id: String,
+    phase: GamePhase,
+    kickoffEpochMillis: Long? = null
+  ): NflGameState = NflGameState(
+    id = id,
+    away = NflSide("1", NflTeam("TBB"), "Tampa Bay", "Buccaneers", 14),
+    home = NflSide("2", NflTeam("DET"), "Detroit", "Lions", 17),
+    phase = phase,
+    kickoffEpochMillis = kickoffEpochMillis
+  )
 
   @Test
   fun cancelledOrPausedPollCycle_cannotEmitLateAnnouncementsAfterSwipeClose() {

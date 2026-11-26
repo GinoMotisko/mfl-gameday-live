@@ -174,6 +174,8 @@ class GameDayVoiceEngine(context: Context) {
     _availableVoices.value = options
   }
 
+  fun hasActiveOrPendingSpeech(): Boolean = _isSpeaking.value || speechQueue.isNotEmpty()
+
   fun enqueueAnnouncement(
     text: String,
     kind: GameEventKind?,
@@ -195,6 +197,11 @@ class GameDayVoiceEngine(context: Context) {
       else -> 40
     }
     val priority = if (highPriority) basePriority + 25 else basePriority
+    if (!settings.muted) {
+      // Synchronously mark speaking BEFORE the worker coroutine wakes so GameDayLiveService & WakeLock
+      // never tear down during the microsecond gap after the final game of a slate flips to FINAL!
+      _isSpeaking.value = true
+    }
     speechQueue.offer(
       QueuedSpeech(
         priority = priority,
