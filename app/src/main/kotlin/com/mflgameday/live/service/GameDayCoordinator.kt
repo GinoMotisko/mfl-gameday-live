@@ -1067,8 +1067,9 @@ class GameDayCoordinator(
       GameDayTelemetry.recordEspnPoll(success = espnSucceeded, latencyMs = System.currentTimeMillis() - espnStartMs)
       if (espnSucceeded) {
         _uiState.update { it.copy(nflGames = board.games, currentSeasonYear = year, currentWeek = week) }
-        // Promote FGS immediately on live scoreboard arrival (~250ms) before multi-second MFL league queries run
-        syncForegroundServiceState(nowMillis = System.currentTimeMillis())
+        // Promote FGS early on live scoreboard arrival (~250ms), but defer any teardown (`allowStop = false`)
+        // until AFTER `differ` + `processDetectedEvents()` have queued any Final-Score TTS calls!
+        syncForegroundServiceState(nowMillis = System.currentTimeMillis(), allowStop = false)
         detectedEvents.addAll(differ.ingestScoreboard(board.games, nowMillis = now, emitFallbackScoreEvents = false))
 
         val summaries = coroutineScope {
@@ -1115,7 +1116,7 @@ class GameDayCoordinator(
           mflScheduleEtag = cond.etag
           if (!espnSucceeded) {
             _uiState.update { it.copy(nflGames = cond.games) }
-            syncForegroundServiceState(nowMillis = System.currentTimeMillis())
+            syncForegroundServiceState(nowMillis = System.currentTimeMillis(), allowStop = false)
             detectedEvents.addAll(
               differ.ingestScoreboard(cond.games, nowMillis = now, emitFallbackScoreEvents = true)
             )
@@ -1505,7 +1506,10 @@ class GameDayCoordinator(
       Result.failure(t)
     }
 
-  private fun syncForegroundServiceState(nowMillis: Long = System.currentTimeMillis()) {
+  private fun syncForegroundServiceState(
+    nowMillis: Long = System.currentTimeMillis(),
+    allowStop: Boolean = true
+  ) {
     val state = _uiState.value
     val s = state.settings
     val isSpeaking = state.isSpeakingNow || voiceEngine.hasActiveOrPendingSpeech()
@@ -1528,7 +1532,7 @@ class GameDayCoordinator(
     ) {
       GameDayLiveService.start(appContext)
     } else if (!shouldRun) {
-      if (GameDayLiveService.isRunningInForeground || GameDayLiveService.isStartPending) {
+      if (allowStop && (GameDayLiveService.isRunningInForeground || GameDayLiveService.isStartPending)) {
         GameDayLiveService.stop(appContext)
       }
     } else {

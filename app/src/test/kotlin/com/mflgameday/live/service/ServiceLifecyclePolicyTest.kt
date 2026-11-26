@@ -124,11 +124,30 @@ class ServiceLifecyclePolicyTest {
       runInBackgroundService = true
     )
 
-    // 1. Cold start before scoreboard loads: never pop a foreground notification prematurely
+    // 1. Cold start / offline before scoreboard loads: never pop a foreground notification prematurely,
+    //    but retain background retry/network-recovery polling until at least one scoreboard loads
     assertFalse(
       ServiceLifecyclePolicy.shouldRunForegroundService(
         settings = settings,
         isBroadcastPaused = false,
+        nflGames = emptyList(),
+        nowMillis = now
+      )
+    )
+    assertTrue(
+      "Must retain background retry loop when scoreboard has not yet loaded (offline/transient failure)",
+      ServiceLifecyclePolicy.shouldKeepPollingInBackground(
+        settings = settings,
+        isBroadcastPaused = false,
+        isAppInForeground = false,
+        nflGames = emptyList(),
+        nowMillis = now
+      )
+    )
+    assertEquals(
+      60,
+      ServiceLifecyclePolicy.computePollWaitSeconds(
+        pollIntervalSeconds = 30,
         nflGames = emptyList(),
         nowMillis = now
       )

@@ -117,8 +117,11 @@ object ServiceLifecyclePolicy {
   /**
    * Determines whether the network polling coroutine should stay alive:
    * - Always allowed while the app is visibly open on screen (`isAppInForeground == true`).
-   * - When backgrounded (`isAppInForeground == false`), ONLY continues if `runInBackgroundService` is enabled
-   *   AND we are inside an active broadcast window (or finishing a spoken call).
+   * - When backgrounded (`isAppInForeground == false`) with `runInBackgroundService == true`:
+   *   - Retains retry/network-recovery loop if `nflGames.isEmpty()` (initial scoreboard fetch failed or
+   *     device started offline, so game-window state is unknown — still with ZERO notification until loaded).
+   *   - Once the slate is loaded (`nflGames.isNotEmpty()`), continues ONLY if inside an active broadcast
+   *     window or finishing a spoken call; sleeps completely off-hours.
    */
   fun shouldKeepPollingInBackground(
     settings: GameDaySettings,
@@ -132,11 +135,13 @@ object ServiceLifecyclePolicy {
     if (settings.operatingMode == OperatingMode.DEMO_SIMULATOR) return false
     if (isAppInForeground) return true
     if (!settings.runInBackgroundService) return false
+    if (nflGames.isEmpty()) return true
     return isSpeakingNow || isWithinActiveBroadcastWindow(settings.operatingMode, nflGames, nowMillis)
   }
 
   /**
    * Adaptive poll cadence:
+   * - Initial scoreboard not yet loaded (`nflGames.isEmpty()`): `60s` retry backoff until first slate loads
    * - Live / Halftime games: user's configured interval (`15..120s`, default `30s`)
    * - Kickoff imminent (`<= 60s`): `30s`
    * - Final 15m countdown before kickoff: `30..180s` (wakes right before kickoff)
@@ -148,6 +153,9 @@ object ServiceLifecyclePolicy {
     nflGames: List<NflGameState>,
     nowMillis: Long
   ): Int {
+    if (nflGames.isEmpty()) {
+      return 60
+    }
     val anyLive = nflGames.any { it.phase == GamePhase.LIVE || it.phase == GamePhase.HALFTIME }
     if (anyLive) {
       return pollIntervalSeconds.coerceIn(15, 120)
