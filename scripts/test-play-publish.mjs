@@ -14,6 +14,7 @@ import {
   evaluateSmokeGate,
   parseArgs,
   validateRolloutFraction,
+  validateUpdatePriority,
   verifyAabBundleIntegrity,
   verifyAabStructure,
   verifyPng24BitRgbBuffer,
@@ -112,6 +113,26 @@ async function runTests() {
   assert.deepEqual(staged.releases[1].versionCodes, ['7']);
   assert.equal(staged.releases[1].status, 'inProgress');
   assert.equal(staged.releases[1].userFraction, 0.2);
+  assert.equal(staged.releases[1].inAppUpdatePriority, 0);
+
+  assert.equal(validateUpdatePriority(undefined), 0);
+  assert.equal(validateUpdatePriority('5'), 5);
+  assert.throws(() => validateUpdatePriority(true), /Invalid --update-priority/);
+  assert.throws(() => validateRolloutFraction(true), /Invalid --rollout/);
+  assert.throws(() => validateUpdatePriority('-1'), /Invalid --update-priority/);
+  assert.throws(() => validateUpdatePriority('6'), /Invalid --update-priority/);
+  assert.throws(() => validateUpdatePriority('2.5'), /Invalid --update-priority/);
+
+  const urgentRelease = buildTrackReleaseUpdate({
+    track: 'production',
+    existingReleases: [],
+    versionCodes: [11],
+    rollout: 1.0,
+    updatePriority: 5,
+    releaseName: '11 (1.3.1)',
+    notesText: 'Critical API update'
+  });
+  assert.equal(urgentRelease.releases[0].inAppUpdatePriority, 5);
 
   const halted = buildHaltTrackUpdate({
     track: 'production',
@@ -155,6 +176,19 @@ async function runTests() {
   assert.deepEqual(completedFromStaged.releases[0].versionCodes, ['7']);
   assert.equal(completedFromStaged.releases[0].status, 'completed');
   assert.equal('userFraction' in completedFromStaged.releases[0], false);
+
+  // Google Play API v3 forbids mutating inAppUpdatePriority on an already-rolled-out release
+  assert.throws(
+    () =>
+      buildSetRolloutTrackUpdate({
+        track: 'production',
+        existingReleases: staged.releases,
+        versionCode: '7',
+        rollout: 0.5,
+        updatePriority: 5
+      }),
+    /Cannot change inAppUpdatePriority/
+  );
 
   // 5b. Smoke gate rejects halted releases, mismatched SHA-256 checksums, and stale /gameday showcase HTML
   const validSha = '002f0ad8b4ac09e790d7b2affb9aa159d331ce27b8b9ef37a783aa4ccfa10c68';

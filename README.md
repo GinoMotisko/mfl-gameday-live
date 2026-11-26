@@ -2,8 +2,8 @@
 
 **Hands-Free Spoken Big-Play Score Announcer & Multi-League MyFantasyLeague Scoreboard for Phones, Foldables & Tablets**
 
-[![Google Play](https://img.shields.io/badge/Google_Play-GameDay_Live_(v1.3.0)-34a853?style=for-the-badge&logo=google-play&logoColor=white)](https://play.google.com/store/apps/details?id=com.motiskoventures.gameday)
-[![Download Direct Pro APK](https://img.shields.io/badge/Direct_Pro_APK-v1.3.0_(Signed_Release)-d4ff78?style=for-the-badge&logo=android&logoColor=090f10)](https://github.com/GinoMotisko/mfl-gameday-live/releases/latest)
+[![Google Play](https://img.shields.io/badge/Google_Play-GameDay_Live_(v1.3.1)-34a853?style=for-the-badge&logo=google-play&logoColor=white)](https://play.google.com/store/apps/details?id=com.motiskoventures.gameday)
+[![Download Direct Pro APK](https://img.shields.io/badge/Direct_Pro_APK-v1.3.1_(Signed_Release)-d4ff78?style=for-the-badge&logo=android&logoColor=090f10)](https://github.com/GinoMotisko/mfl-gameday-live/releases/latest)
 [![Product Showcase](https://img.shields.io/badge/Showcase_&_QR_Install-motisko.com%2Fgameday-91e3db?style=for-the-badge)](https://www.motisko.com/gameday)
 
 Built by **[Gino Motisko](https://www.motisko.com)** (`Motisko Ventures LLC` · `Applied AI & Practice Leadership`). Inspired by MyFantasyLeague's classic 15-year Windows `GameDay` desktop announcer and [`darcuri/gameannouncer`](https://github.com/darcuri/gameannouncer), re-architected from the ground up in **Kotlin + Jetpack Compose** for modern Android 12–16+ devices (**Samsung Galaxy Tab S10+ / S7**, **Google Pixel Fold**, compact 8" tablets, and Android phones).

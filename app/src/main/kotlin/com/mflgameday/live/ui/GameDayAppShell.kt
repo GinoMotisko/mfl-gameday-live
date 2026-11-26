@@ -24,17 +24,20 @@ import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SportsFootball
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -73,6 +76,8 @@ import com.mflgameday.live.ui.screens.SettingsAndVoicesScreen
 import com.mflgameday.live.ui.screens.SetupAndAuthScreen
 import com.mflgameday.live.ui.screens.settings.QuickBoothBottomSheet
 import com.mflgameday.live.ui.theme.LocalGameDayColors
+import com.mflgameday.live.update.AppUpdateBannerKind
+import com.mflgameday.live.update.AppUpdateUiState
 
 enum class MainTab(val label: String, val icon: ImageVector) {
   FANTASY("Fantasy", Icons.Default.EmojiEvents),
@@ -91,6 +96,9 @@ enum class MainTab(val label: String, val icon: ImageVector) {
 fun GameDayAppShell(
   uiState: GameDayUiState,
   coordinator: GameDayCoordinator,
+  updateUiState: AppUpdateUiState = AppUpdateUiState(),
+  onApplyAppUpdate: () -> Unit = {},
+  onDismissAppUpdate: () -> Unit = {},
   onRequestNotificationPermission: () -> Unit
 ) {
   val ext = LocalGameDayColors.current
@@ -156,6 +164,14 @@ fun GameDayAppShell(
         onToggleMute = { coordinator.updateSettings { it.copy(muted = !it.muted) } },
         onRefresh = { coordinator.refreshNow() }
       )
+
+      if (updateUiState.bannerKind != AppUpdateBannerKind.NONE) {
+        AppUpdateBannerStrip(
+          updateUiState = updateUiState,
+          onPrimaryAction = onApplyAppUpdate,
+          onDismiss = onDismissAppUpdate
+        )
+      }
 
       if (uiState.isBroadcastPaused) {
         Surface(
@@ -470,6 +486,82 @@ private fun TopBroadcastBar(
           contentDescription = "Refresh now",
           tint = MaterialTheme.colorScheme.onSurface
         )
+      }
+    }
+  }
+}
+
+@Composable
+private fun AppUpdateBannerStrip(
+  updateUiState: AppUpdateUiState,
+  onPrimaryAction: () -> Unit,
+  onDismiss: () -> Unit
+) {
+  val ext = LocalGameDayColors.current
+  Surface(
+    color = ext.turfAccent.copy(alpha = 0.14f),
+    modifier = Modifier.fillMaxWidth()
+  ) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+      ) {
+        Icon(
+          imageVector = Icons.Default.SystemUpdate,
+          contentDescription = null,
+          tint = ext.turfAccent,
+          modifier = Modifier.size(18.dp)
+        )
+        Text(
+          text = when (updateUiState.bannerKind) {
+            AppUpdateBannerKind.PLAY_STORE_DOWNLOADING -> "Downloading GameDay Live update in background…"
+            AppUpdateBannerKind.PLAY_STORE_RESTART_READY -> "New update ready — restart whenever convenient."
+            AppUpdateBannerKind.DIRECT_APK_AVAILABLE -> {
+              val ver = updateUiState.availableVersionLabel ?: "update"
+              "New Pro Edition $ver is available."
+            }
+            AppUpdateBannerKind.NONE -> ""
+          },
+          style = MaterialTheme.typography.labelMedium,
+          fontWeight = FontWeight.SemiBold,
+          modifier = Modifier.weight(1f),
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis
+        )
+
+        if (updateUiState.bannerKind == AppUpdateBannerKind.PLAY_STORE_RESTART_READY) {
+          FilledTonalButton(onClick = onPrimaryAction) {
+            Text("Restart Now")
+          }
+        } else if (updateUiState.bannerKind == AppUpdateBannerKind.DIRECT_APK_AVAILABLE) {
+          FilledTonalButton(onClick = onPrimaryAction) {
+            Text("Get Update")
+          }
+        }
+
+        IconButton(onClick = onDismiss, modifier = Modifier.size(30.dp)) {
+          Icon(
+            imageVector = Icons.Default.Close,
+            contentDescription = "Dismiss update notice",
+            tint = ext.subtleText,
+            modifier = Modifier.size(16.dp)
+          )
+        }
+      }
+      if (updateUiState.bannerKind == AppUpdateBannerKind.PLAY_STORE_DOWNLOADING) {
+        val frac = updateUiState.downloadProgressFraction
+        if (frac != null) {
+          LinearProgressIndicator(
+            progress = { frac },
+            modifier = Modifier.fillMaxWidth()
+          )
+        } else {
+          LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
       }
     }
   }

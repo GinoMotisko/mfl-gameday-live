@@ -63,15 +63,20 @@ MFL-GameDay-Android-app/
 │       │   │           ├── Color.kt
 │       │   │           ├── Theme.kt                  # 5 animated broadcast color palettes
 │       │   │           └── Type.kt
+│       │   │       ├── update/
+│       │   │       │   ├── AppUpdateController.kt    # Lifecycle-safe update banner & action contract
+│       │   │       │   └── InAppUpdatePolicy.kt      # Pure priority (0..3 Flexible / 4..5 Immediate) & 7d snooze policy
 │       │   └── res/                                  # Adaptive vector football/soundwave icon, strings, XML rules
-│       ├── playStore/                                # Google Play flavor overrides (AndroidManifest.xml, network_security_config.xml)
+│       ├── direct/kotlin/com/mflgameday/live/update/ # Direct Pro APK 24h release notifier (Play-excluded)
+│       ├── playStore/                                # Google Play flavor overrides (AndroidManifest.xml, network_security_config.xml, Play Core AppUpdateManager)
 │       ├── test/kotlin/com/mflgameday/live/
 │       │   ├── data/ClayPackAndPositionsTest.kt          # 25-position MFL taxonomy & MockWebServer ETag delta manifest tests
 │       │   ├── data/MflAndEspnPipelineIntegrationTest.kt # MockWebServer MFL + ESPN + HTML breakdown pipeline tests
 │       │   ├── diagnostics/DiagnosticsAndLogoTest.kt     # Secret redaction & 32-team NFL logo / headshot tests
 │       │   ├── engine/EventDifferAndSpeechTest.kt        # Pure unit tests for EventDiffer, Speech, Best Ball & Conflicts
 │       │   ├── service/ServiceLifecyclePolicyTest.kt     # Home-background vs Recents swipe-close & projection pace tests
-│       │   └── ui/VoiceAndFieldVisualPolicyTest.kt       # Unit tests for 6-commentator casting, 5-state rings & linear field geometry
+│       │   ├── ui/VoiceAndFieldVisualPolicyTest.kt       # Unit tests for 6-commentator casting, 5-state rings & linear field geometry
+│       │   └── update/InAppUpdatePolicyTest.kt           # Unit tests for Flexible/Immediate priority, 7d snooze & semver comparison
 │       └── androidTest/kotlin/com/mflgameday/live/
 │           └── ui/GameDayUiSmokeTest.kt              # Instrumented Compose smoke test
 ├── docs/

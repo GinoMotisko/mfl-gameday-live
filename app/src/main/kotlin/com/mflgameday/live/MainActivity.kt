@@ -26,20 +26,46 @@ import com.mflgameday.live.ui.theme.LocalGameDayColors
 import com.mflgameday.live.ui.theme.MFLGameDayTheme
 
 class MainActivity : ComponentActivity() {
+  private val updateFlowLauncher = registerForActivityResult(
+    ActivityResultContracts.StartIntentSenderForResult()
+  ) { result ->
+    (application as MflGameDayApp).updateController.onUpdateFlowResult(result.resultCode)
+  }
+
   override fun onStart() {
     super.onStart()
-    (application as MflGameDayApp).coordinator.onAppForegrounded()
+    val app = application as MflGameDayApp
+    app.updateController.bindActivity(this, updateFlowLauncher)
+    app.coordinator.onAppForegrounded()
+  }
+
+  override fun onResume() {
+    super.onResume()
+    val app = application as MflGameDayApp
+    val state = app.coordinator.uiState.value
+    if (state.settings.operatingMode != OperatingMode.UNCONFIGURED) {
+      app.updateController.onActivityResumed(
+        activity = this,
+        isSpeakingProvider = {
+          app.coordinator.uiState.value.isSpeakingNow || app.coordinator.voiceEngine.hasActiveOrPendingSpeech()
+        }
+      )
+    }
   }
 
   override fun onStop() {
     super.onStop()
+    val app = application as MflGameDayApp
+    app.updateController.unbindActivity(this)
     if (!isChangingConfigurations) {
-      (application as MflGameDayApp).coordinator.onAppBackgrounded()
+      app.coordinator.onAppBackgrounded()
     }
   }
 
   override fun onDestroy() {
-    (application as MflGameDayApp).coordinator.onMainActivityDestroyed(
+    val app = application as MflGameDayApp
+    app.updateController.unbindActivity(this)
+    app.coordinator.onMainActivityDestroyed(
       isChangingConfigurations = isChangingConfigurations,
       isFinishing = isFinishing
     )
@@ -50,10 +76,13 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
 
-    val coordinator = (application as MflGameDayApp).coordinator
+    val app = application as MflGameDayApp
+    val coordinator = app.coordinator
+    val updateController = app.updateController
 
     setContent {
       val uiState by coordinator.uiState.collectAsStateWithLifecycle()
+      val updateUiState by updateController.uiState.collectAsStateWithLifecycle()
 
       val notifPermLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -98,6 +127,9 @@ class MainActivity : ComponentActivity() {
           GameDayAppShell(
             uiState = uiState,
             coordinator = coordinator,
+            updateUiState = updateUiState,
+            onApplyAppUpdate = { updateController.onPrimaryBannerAction(this@MainActivity) },
+            onDismissAppUpdate = { updateController.onDismissBanner() },
             onRequestNotificationPermission = {
               if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
