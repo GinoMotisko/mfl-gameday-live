@@ -1,4 +1,4 @@
-# Google Play Console Submission Pack — GameDay Live (`v1.2.2` / `versionCode = 6`)
+# Google Play Console Submission Pack — GameDay Live (`v1.3.0` / `versionCode = 10`)
 
 Prepared for **Motisko Ventures LLC** (Google Play Developer Account ID `7669036577809025288`, D-U-N-S `14-685-6313`).
 Every field below is audited against Google Play's 2026 Impersonation/IP, Metadata, Data Safety, and Android 14–16 (`targetSdk = 36`) Foreground Service policies.
@@ -9,50 +9,51 @@ Every field below is audited against Google Play's 2026 Impersonation/IP, Metada
 
 All uploadable artifacts are staged in both `dist/play-store-kit/` and `OneDrive/Motisko Ventures LLC/Google-Play-Console-Kit/2-App-Bundle-And-Store-Graphics/`:
 
-1. **Signed Android App Bundle (`.aab`)**: `GameDay-Live-PlayStore-v1.2.2.aab`
+1. **Signed Android App Bundle (`.aab`)**: `GameDay-Live-PlayStore-v1.3.0.aab`
    - `applicationId`: `com.motiskoventures.gameday`
-   - `versionName`: `1.2.2` (`versionCode = 6`)
+   - `versionName`: `1.3.0` (`versionCode = 10`)
    - Signing Key SHA-256: `4ffddda61399a4b04cf9a530ad68727f702d6dbbf6754107500265a7e2e350eb`
-2. **R8 Deobfuscation Mapping File**: `mapping-playStoreRelease-v1.2.2.txt`
+2. **R8 Deobfuscation Mapping File**: `mapping-playStoreRelease-v1.3.0.txt`
    - Upload alongside the `.aab` under *App bundle explorer -> Downloads / Reobfuscation file* so Android Vitals stack traces show exact Kotlin line numbers.
 3. **Hi-Res App Icon (`512 × 512` PNG)**: `icon-512x512.png`
 4. **Feature Graphic (`1024 × 500`, 24-bit RGB PNG, no alpha)**: `feature-graphic-1024x500.png`
 5. **Phone Screenshots (`6 × 1080 × 1920`, `9:16` 24-bit RGB PNG)**: `screenshots-phone/01-*.png` .. `06-*.png`
-6. **7-Inch Tablet & Foldable Screenshots (`4 × 1920 × 1080`, `16:9` 24-bit RGB PNG)**: `screenshots-tablet-7in/01-*.png` .. `04-*.png`
-7. **10-Inch Tablet Screenshots (`4 × 2560 × 1440`, `16:9` 24-bit RGB PNG)**: `screenshots-tablet-10in/01-*.png` .. `04-*.png`
+6. **Foldable Screenshots (`4` `24-bit RGB` PNGs: `1:1` `2048 × 2048`, `4:3` `2048 × 1536`, `10:16` `1200 × 1920`)**: `screenshots-foldable/01-*.png` .. `04-*.png`
+7. **7-Inch Tablet Screenshots (`4 × 1920 × 1080`, `16:9` 24-bit RGB PNG)**: `screenshots-tablet-7in/01-*.png` .. `04-*.png`
+8. **10-Inch Tablet Screenshots (`4 × 2560 × 1440`, `16:9` 24-bit RGB PNG)**: `screenshots-tablet-10in/01-*.png` .. `04-*.png`
 
 ---
 
 ## 2. Store Listing Copy (ASO-Optimized & 100% Trademark-Safe)
 
-- **App Name (`28 / 30` chars)**:
-  `GameDay Live: Football Audio`
-- **Short Description (`76 / 80` chars)**:
-  `Live spoken pro football play-by-play, Red Zone alerts & fantasy companion.`
-- **Full Description (`~2,980 / 4,000` chars)**:
+- **App Name (`29 / 30` chars)**:
+  `GameDay Live: Score Announcer`
+- **Short Description (`79 / 80` chars)**:
+  `Spoken pro football big-play alerts, Red Zone calls & multi-league fantasy app.`
+- **Full Description (`~3,240 / 4,000` chars)**:
   ```text
-  Hear Sunday happen — hands-free, in real time, with or without a fantasy football league.
+  Not live game radio — GameDay Live is your hands-free Sunday big-play score announcer and multi-league fantasy football scoreboard.
 
-  GameDay Live turns any Android phone, foldable, or tablet into a live spoken pro football audio booth and multi-league fantasy companion. Pair your phone to a patio speaker, keep it in your pocket with the screen off, or prop a wide tablet on the counter as a 3-pane Sunday Command Center: GameDay Live tracks active games and speaks touchdowns, field goals, turnovers, sacks, explosive plays, and Red Zone trips out loud.
+  Built for grilling, driving, hosting, or tracking multiple leagues on the couch, GameDay Live watches active pro football games and speaks touchdowns, field goals, turnovers, sacks, explosive 25+ yard plays, Red Zone trips, and fantasy lead changes out loud over your music in 3 seconds — even with your phone screen off.
 
-  INSTANT LIVE AUDIO — NO ACCOUNT REQUIRED
+  HANDS-FREE BIG-PLAY ANNOUNCER — NO ACCOUNT REQUIRED
   • Launch "Live Scores Only" in one tap — zero registration, zero subscription, and zero ads.
-  • Synthesized stadium brass, whistle, and Red Zone stingers precede each spoken announcement so you immediately know the gravity of the play.
-  • Smart Audio Ducking smoothly lowers your background music or podcast during a 3-second spoken call and restores volume automatically.
-  • Clean Lifecycle Control: Keeps speaking with your screen off, offers instant Mute / Stop controls in the notification shade, and stops immediately when swiped closed from Recent Apps.
+  • 6 Distinct Commentators: Pick David (Network Lead), Red Zone Rex (Octane Hype), Callie (Studio Host), Nigel (London Booth), Macca (Aussie Sideline), or Coach Vance (Film Room) from the 1-tap Top Booth Pill or Announcer Studio.
+  • Stadium Brass & Whistle Stingers precede each spoken call, while Smart Audio Ducking lowers Spotify or podcasts for 3 seconds and restores volume automatically.
+  • Zero Off-Hours Spam: Runs strictly during active game windows (starting 90 minutes before kickoff) and enters silent standby automatically once games go Final.
 
-  MULTI-LEAGUE FANTASY COMPANION (COMPATIBLE WITH MYFANTASYLEAGUE)
-  • Connect an existing MyFantasyLeague (MFL) session or enter any public League ID — credentials stay encrypted locally on your device using Android Keystore AES-256-GCM.
-  • Track Standard PPR, Doubleheaders, and Best Ball (optimal lineup) leagues side-by-side in one unified dashboard.
-  • League-Accurate Win Probability & Projections: Combines official pre-game player projections with live remaining game-clock pace, pinning your franchise ("YOU") consistently for instant clarity.
-  • Late-Game Bench & Best Ball Intelligence: Tracks Best Ball bubble starters vs. bench chasers in real time and surfaces fourth-quarter bench insights without premature early-window noise.
-  • Cross-League Conflict Tags: Instantly spots when a player starts for your team in League A while playing against you in League B.
+  LIVE LINEAR FOOTBALL FIELD & 5-STATE PLAYER RINGS
+  • Edge-to-Edge Stadium Field: Every live game card and Game Center displays team-colored endzones, goalposts, 10-yard markers, yellow 1st-down line, Red Zone shading, and directional ball position.
+  • Glanceable 5-State Clay Avatar Rings: Championship Gold glow when your player's offense has the ball, pulsing Crimson Red inside the 20-yard Red Zone, solid team ring during live games, muted hairline before kickoff, and clean no-ring once Final.
 
-  DESIGNED FOR PHONES, FOLDABLES & WIDE TABLETS
-  • True Adaptive Layouts: Compact bottom navigation on phones, 2-pane master-detail split on unfolded foldables and 7-inch tablets, and a 3-pane Sunday Command Center with a pinned live announcement ticker on 10-inch tablets.
-  • 5 Custom Broadcast Themes: Stadium PrimeTime, True-Black Cyber Gridiron OLED, high-contrast Sunday Daylight, Red Zone Octane, and Classic GameDay Gold (plus automatic system Dark / Light sync).
-  • Broadcast Voice Studio: Audition 4 announcer personas across installed Android neural voices with independent speed and pitch tuning.
-  • Built-in Interactive Sunday Simulator: Test live touchdown banners, win-probability swings, and spoken voice calls any day of the week — even in the offseason.
+  MULTI-LEAGUE FANTASY BRAIN (COMPATIBLE WITH MYFANTASYLEAGUE)
+  • Connect an existing MyFantasyLeague (MFL) session or enter any public 5-digit League ID — credentials stay encrypted locally on your device using Android Keystore AES-256-GCM.
+  • Track Standard PPR, Doubleheaders, and Best Ball (optimal lineup) leagues side-by-side with live Win Probability and remaining game-clock pace projections.
+  • Cross-League Conflict Tags (CONFLICT ⚡): Instantly spots when a player starts for your team in League A while playing against you in League B, plus Best Ball BUBBLE / CHASING tags.
+
+  NATIVE FOR PHONES, FOLDABLES & WIDE TABLETS
+  • Adaptive Multi-Device Layouts: 1-hand bottom navigation and clean 5-category Settings Hub on phones, hinge-safe 2-pane split on unfolded foldables, and a 3-pane Sunday Command Center on 10-inch tablets.
+  • 5 Custom Broadcast Themes (plus Auto Dark / Light) and a built-in Interactive Sunday Simulator to test live spoken calls any day of the year.
 
   Disclaimer: GameDay Live is an independent application developed and published by Motisko Ventures LLC. It is an unofficial companion compatible with MyFantasyLeague (MFL) and is not affiliated with, endorsed by, or sponsored by MyFantasyLeague.com, the National Football League, or any professional sports league or team.
   ```
@@ -120,7 +121,7 @@ All uploadable artifacts are staged in both `dist/play-store-kit/` and `OneDrive
 Because **Motisko Ventures LLC** is a verified **Organization** account, you have **zero 14-day / 12-tester hold**:
 
 1. **Track 1 — `Testing -> Internal testing` (Instant Link in ~60 Seconds!)**:
-   - Upload `GameDay-Live-PlayStore-v1.2.2.aab` + `mapping-playStoreRelease-v1.2.2.txt` to **Internal testing** first.
+   - Upload `GameDay-Live-PlayStore-v1.3.0.aab` + `mapping-playStoreRelease-v1.3.0.txt` to **Internal testing** first.
    - Add your friends' Gmail addresses to an `Early Friends` email list and copy the **Join on Web / Android link** — up to 100 invited friends can install directly from Google Play *immediately* without waiting for Google's 2–5 day initial review!
 2. **Track 2 — `Promote release -> Production` (Public Worldwide / US Launch)**:
-   - Once the 35-second audible Foreground Service video URL is pasted in `App content`, click **Promote release -> Production** on that exact same `v1.2.2 (6)` bundle -> Select countries -> **Start rollout to Production**.
+   - Once the 35-second audible Foreground Service video URL is pasted in `App content`, click **Promote release -> Production** on that exact same `v1.3.0 (10)` bundle -> Select countries -> **Start rollout to Production**.

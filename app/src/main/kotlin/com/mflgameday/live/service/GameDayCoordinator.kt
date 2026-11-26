@@ -868,14 +868,19 @@ class GameDayCoordinator(
         _uiState.update {
           it.copy(
             nflGames = DemoSimulatorData.initialGames(now),
-            statusMessage = "Demo NFL Schedule & Starters Refreshed",
+            statusMessage = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) "Demo Schedule & Starters Refreshed" else "Demo NFL Schedule & Starters Refreshed",
             lastUpdatedMillis = now
           )
         }
         return@launch
       }
       mflScheduleEtag = null
-      _uiState.update { it.copy(isRefreshing = true, statusMessage = "Refreshing NFL schedule & rosters…") }
+      _uiState.update {
+        it.copy(
+          isRefreshing = true,
+          statusMessage = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) "Refreshing game schedule & rosters…" else "Refreshing NFL schedule & rosters…"
+        )
+      }
       val gen = broadcastGeneration
       initializeSeasonAndPlayers(forcePlayerRefresh = true)
       performPollCycle(forceScheduleReload = true, cycleGen = gen)
@@ -992,7 +997,11 @@ class GameDayCoordinator(
     val playersMap: Map<String, FantasyPlayer> = if (cachedJson != null) {
       runCatching { mflClient.parsePlayersJson(cachedJson) }.getOrDefault(emptyMap())
     } else {
-      _uiState.update { it.copy(statusMessage = "Syncing $year NFL & IDP player database…") }
+      _uiState.update {
+        it.copy(
+          statusMessage = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) "Syncing $year player & IDP database…" else "Syncing $year NFL & IDP player database…"
+        )
+      }
       runCatching {
         val raw = mflClient.fetchPlayersRawJson(year)
         storage.saveCachedPlayersJson(year, raw)
@@ -1313,7 +1322,7 @@ class GameDayCoordinator(
         warningMessage = warnings.takeIf { w -> w.isNotEmpty() }?.joinToString(" · "),
         statusMessage = when {
           warnings.isNotEmpty() -> "Partial Update"
-          liveCount > 0 -> "Live · $liveCount NFL Games Active"
+          liveCount > 0 -> if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) "Live · $liveCount Games Active" else "Live · $liveCount NFL Games Active"
           else -> "Monitoring · Standing By"
         }
       )

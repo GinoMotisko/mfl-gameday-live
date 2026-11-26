@@ -65,7 +65,7 @@ import com.mflgameday.live.service.GameDayCoordinator
 import com.mflgameday.live.service.GameDayUiState
 import com.mflgameday.live.ui.components.AnimatedScoreText
 import com.mflgameday.live.ui.components.ExposurePill
-import com.mflgameday.live.ui.components.MiniFieldPositionBar
+import com.mflgameday.live.ui.components.GooglePinnedLinearField
 import com.mflgameday.live.ui.components.RedZonePulseBadge
 import com.mflgameday.live.ui.components.TeamShieldBadge
 import com.mflgameday.live.ui.theme.LocalGameDayColors
@@ -145,9 +145,10 @@ fun NflGamesScreen(
     HorizontalDivider(color = ext.cardBorder.copy(alpha = 0.6f))
 
     if (filteredGames.isEmpty()) {
+      val sportTag = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) "live" else "NFL"
       Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(
-          text = if (uiState.nflGames.isEmpty()) "Loading NFL scoreboard…" else "No NFL games match '${filter.label}'.",
+          text = if (uiState.nflGames.isEmpty()) "Loading $sportTag scoreboard…" else "No $sportTag games match '${filter.label}'.",
           color = ext.subtleText
         )
       }
@@ -259,13 +260,11 @@ private fun NflBroadcastCard(
         }
       }
 
-      val fieldProg = game.fieldProgressFraction
-      if (game.phase == GamePhase.LIVE && fieldProg != null) {
-        MiniFieldPositionBar(
-          progressFraction = fieldProg,
-          inRedZone = game.inRedZone,
-          downDistanceText = game.downDistanceText,
-          possessionText = game.possessionText
+      if (game.phase == GamePhase.LIVE && game.fieldProgressFraction != null) {
+        GooglePinnedLinearField(
+          game = game,
+          fieldHeight = 40.dp,
+          modifier = Modifier.fillMaxWidth()
         )
       }
 
@@ -410,7 +409,13 @@ private fun GameCenterDetailDialog(
     },
     text = {
       Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (game.downDistanceText.isNotBlank()) {
+        if (game.phase == GamePhase.LIVE && game.fieldProgressFraction != null) {
+          GooglePinnedLinearField(
+            game = game,
+            fieldHeight = 54.dp,
+            modifier = Modifier.fillMaxWidth()
+          )
+        } else if (game.downDistanceText.isNotBlank()) {
           Text(
             text = "Situation: ${game.downDistanceText}",
             style = MaterialTheme.typography.bodyMedium,

@@ -145,13 +145,48 @@ fun SetupAndAuthScreen(
               )
               Text(
                 text = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) {
-                  "Live Spoken Football Audio · Multi-League Fantasy Companion"
+                  "Spoken Big-Play Score Announcer & Multi-League Fantasy Scoreboard"
                 } else {
-                  "Real-Time Multi-League Scoring · Live NFL RedZone · Spoken Play-by-Play"
+                  "Spoken NFL Big-Play Announcer & Multi-League MyFantasyLeague Scoreboard"
                 },
                 style = MaterialTheme.typography.bodyMedium,
-                color = ext.subtleText
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
               )
+            }
+          }
+
+          Text(
+            text = if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) {
+              "Not live game radio — built for Sunday multitasking. GameDay Live watches active games and speaks touchdowns, turnovers, Red Zone trips, and fantasy lead changes over your music in 3 seconds, even with your screen off."
+            } else {
+              "Not live NFL radio — built for Sunday multitasking. GameDay Live watches every game and speaks touchdowns, turnovers, Red Zone trips, and MyFantasyLeague lead flips over your music in 3 seconds, even with your screen off."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = ext.subtleText
+          )
+
+          FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+          ) {
+            listOf(
+              "🔊 Big Plays Spoken Out Loud",
+              if (com.mflgameday.live.BuildConfig.IS_PLAY_STORE_BUILD) "🏆 Multi-League Fantasy Brain" else "🏆 Multi-League MFL Brain",
+              "🆓 Zero Login Required"
+            ).forEach { badge ->
+              Surface(
+                color = ext.cardSurface.copy(alpha = 0.72f),
+                shape = RoundedCornerShape(999.dp),
+                modifier = Modifier.border(1.dp, ext.cardBorder, RoundedCornerShape(999.dp))
+              ) {
+                Text(
+                  text = badge,
+                  style = MaterialTheme.typography.labelMedium,
+                  fontWeight = FontWeight.Bold,
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                )
+              }
             }
           }
 

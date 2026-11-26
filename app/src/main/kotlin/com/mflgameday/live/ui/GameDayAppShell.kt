@@ -1,6 +1,8 @@
 package com.mflgameday.live.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -18,18 +20,18 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SportsFootball
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -54,7 +56,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.mflgameday.live.model.AnnouncementScope
 import com.mflgameday.live.model.GamePhase
 import com.mflgameday.live.model.OperatingMode
 import com.mflgameday.live.service.GameDayCoordinator
@@ -70,6 +71,7 @@ import com.mflgameday.live.ui.screens.NflGamesScreen
 import com.mflgameday.live.ui.screens.PlayFeedScreen
 import com.mflgameday.live.ui.screens.SettingsAndVoicesScreen
 import com.mflgameday.live.ui.screens.SetupAndAuthScreen
+import com.mflgameday.live.ui.screens.settings.QuickBoothBottomSheet
 import com.mflgameday.live.ui.theme.LocalGameDayColors
 
 enum class MainTab(val label: String, val icon: ImageVector) {
@@ -99,6 +101,7 @@ fun GameDayAppShell(
   }
   var showAddLeagueModal by rememberSaveable { mutableStateOf(false) }
   var showManualQuickTour by rememberSaveable { mutableStateOf(false) }
+  var showQuickBoothSheet by rememberSaveable { mutableStateOf(false) }
 
   if (uiState.settings.operatingMode == OperatingMode.UNCONFIGURED || showAddLeagueModal) {
     Column(
@@ -148,9 +151,9 @@ fun GameDayAppShell(
       TopBroadcastBar(
         uiState = uiState,
         compact = isCompactHeader,
-        onSelectScope = { sc -> coordinator.updateSettings { it.copy(scope = sc) } },
+        ultraCompact = shellWidth < 410.dp,
+        onOpenBoothSheet = { showQuickBoothSheet = true },
         onToggleMute = { coordinator.updateSettings { it.copy(muted = !it.muted) } },
-        onOpenHelpTour = { showManualQuickTour = true },
         onRefresh = { coordinator.refreshNow() }
       )
 
@@ -300,8 +303,23 @@ fun GameDayAppShell(
       }
     }
 
+    if (showQuickBoothSheet) {
+      QuickBoothBottomSheet(
+        uiState = uiState,
+        coordinator = coordinator,
+        onOpenFullSettings = { selectedTab = MainTab.SETTINGS },
+        onDismiss = { showQuickBoothSheet = false }
+      )
+    }
+
     if (!uiState.settings.hasCompletedQuickTour || showManualQuickTour) {
       QuickTourDialog(
+        selectedPersona = uiState.settings.voicePersona,
+        onSelectAndSamplePersona = { persona ->
+          val updated = uiState.settings.copy(voicePersona = persona, selectedSystemVoiceId = null)
+          coordinator.updateSettings { updated }
+          coordinator.voiceEngine.speakImmediateSample(persona.sampleLine, updated, persona.sampleKind)
+        },
         onSampleVoice = { coordinator.simulateNextLivePlay() },
         onDismissAndComplete = {
           showManualQuickTour = false
@@ -336,9 +354,9 @@ private fun TabIconWithBadge(tab: MainTab, liveNflCount: Int, playCount: Int) {
 private fun TopBroadcastBar(
   uiState: GameDayUiState,
   compact: Boolean,
-  onSelectScope: (AnnouncementScope) -> Unit,
+  ultraCompact: Boolean,
+  onOpenBoothSheet: () -> Unit,
   onToggleMute: () -> Unit,
-  onOpenHelpTour: () -> Unit,
   onRefresh: () -> Unit
 ) {
   val ext = LocalGameDayColors.current
@@ -347,6 +365,11 @@ private fun TopBroadcastBar(
     OperatingMode.NFL_LIVE_ONLY -> "$brandPrefix · Live Scores"
     OperatingMode.DEMO_SIMULATOR -> "$brandPrefix · Sunday Simulator"
     else -> uiState.activeLeagueSnapshot?.config?.leagueName ?: brandPrefix
+  }
+  val boothLabel = if (ultraCompact) {
+    uiState.settings.voicePersona.shortName
+  } else {
+    "${uiState.settings.voicePersona.shortName} · ${uiState.settings.scope.shortLabel}"
   }
 
   Surface(
@@ -390,15 +413,38 @@ private fun TopBroadcastBar(
         )
       }
 
-      if (!compact) {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-          AnnouncementScope.entries.forEach { sc ->
-            FilterChip(
-              selected = uiState.settings.scope == sc,
-              onClick = { onSelectScope(sc) },
-              label = { Text(sc.shortLabel) }
-            )
-          }
+      Surface(
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+        shape = RoundedCornerShape(999.dp),
+        modifier = Modifier
+          .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
+          .clip(RoundedCornerShape(999.dp))
+          .clickable(onClick = onOpenBoothSheet)
+      ) {
+        Row(
+          modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+          Icon(
+            imageVector = Icons.Default.Mic,
+            contentDescription = "Open Broadcast Booth",
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(15.dp)
+          )
+          Text(
+            text = boothLabel,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+          )
+          Icon(
+            imageVector = Icons.Default.ArrowDropDown,
+            contentDescription = null,
+            tint = ext.subtleText,
+            modifier = Modifier.size(16.dp)
+          )
         }
       }
 
@@ -415,14 +461,6 @@ private fun TopBroadcastBar(
           imageVector = if (uiState.settings.muted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
           contentDescription = if (uiState.settings.muted) "Unmute announcer" else "Mute announcer",
           tint = if (uiState.settings.muted) MaterialTheme.colorScheme.error else ext.turfAccent
-        )
-      }
-
-      IconButton(onClick = onOpenHelpTour) {
-        Icon(
-          imageVector = Icons.AutoMirrored.Filled.HelpOutline,
-          contentDescription = "Quick Tour & Help",
-          tint = MaterialTheme.colorScheme.onSurface
         )
       }
 

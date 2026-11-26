@@ -55,6 +55,10 @@ class GameDayVoiceEngine(context: Context) {
 
   private var tts: TextToSpeech? = null
   private var voiceMapById: Map<String, Voice> = emptyMap()
+  private var defaultEngineVoice: Voice? = null
+  @Volatile
+  var installedDescriptors: List<InstalledVoiceDescriptor> = emptyList()
+    private set
   private var currentUtteranceDone: CompletableDeferred<Unit>? = null
 
   private val _ttsReady = MutableStateFlow(false)
@@ -131,6 +135,7 @@ class GameDayVoiceEngine(context: Context) {
 
   fun refreshAvailableVoices() {
     val engine = tts ?: return
+    defaultEngineVoice = runCatching { engine.defaultVoice }.getOrNull()
     val rawVoices = runCatching { engine.voices?.toList().orEmpty() }.getOrDefault(emptyList())
       .filter { v ->
         v.locale.language.equals("en", ignoreCase = true) &&
@@ -138,32 +143,46 @@ class GameDayVoiceEngine(context: Context) {
       }
 
     voiceMapById = rawVoices.associateBy { it.name }
+    installedDescriptors = rawVoices.map { v ->
+      InstalledVoiceDescriptor(
+        id = v.name,
+        localeTag = v.locale.toLanguageTag(),
+        country = v.locale.country.uppercase(),
+        quality = v.quality,
+        isNetwork = v.isNetworkConnectionRequired,
+        features = v.features.orEmpty()
+      )
+    }
 
     val groupedCounters = HashMap<String, Int>()
     val options = rawVoices
       .sortedWith(
-        compareByDescending<Voice> { v -> if (v.locale.country.equals("US", ignoreCase = true)) 1 else 0 }
+        compareByDescending<Voice> { !it.isNetworkConnectionRequired }
+          .thenByDescending { v -> if (v.locale.country.equals("US", ignoreCase = true)) 1 else 0 }
           .thenByDescending { it.quality }
-          .thenBy { it.isNetworkConnectionRequired }
           .thenBy { it.name }
       )
       .map { v ->
         val regionLabel = when (v.locale.country.uppercase()) {
-          "US" -> "US Broadcast"
-          "GB" -> "UK Broadcast"
-          "AU" -> "AU Broadcast"
-          "CA" -> "Canada Broadcast"
-          "IN" -> "India English"
-          else -> "English (${v.locale.country.ifEmpty { "Global" }})"
+          "US" -> "US Voice"
+          "GB" -> "UK Voice"
+          "AU" -> "Aussie Voice"
+          "CA" -> "Canada Voice"
+          "IN" -> "India Voice"
+          else -> "English Voice"
         }
-        val modeTag = if (v.isNetworkConnectionRequired) "Neural Cloud" else "On-Device"
-        val key = "$regionLabel-$modeTag"
-        val idx = (groupedCounters[key] ?: 0) + 1
-        groupedCounters[key] = idx
-        val qualityBadge = if (v.quality >= Voice.QUALITY_HIGH) "HD" else "Std"
+        val idx = (groupedCounters[regionLabel] ?: 0) + 1
+        groupedCounters[regionLabel] = idx
+        val letter = ('A' + ((idx - 1) % 26)).toString() + if (idx > 26) "${idx / 26}" else ""
+        val modeLabel = when {
+          v.quality >= Voice.QUALITY_HIGH && !v.isNetworkConnectionRequired -> "Studio HD · Offline"
+          v.quality >= Voice.QUALITY_HIGH -> "Studio HD"
+          !v.isNetworkConnectionRequired -> "Works Offline"
+          else -> "Standard"
+        }
         VoiceOption(
           id = v.name,
-          displayName = "$regionLabel #$idx · $modeTag ($qualityBadge)",
+          displayName = "$regionLabel $letter · $modeLabel",
           localeTag = v.locale.toLanguageTag(),
           isNetworkEnhanced = v.isNetworkConnectionRequired,
           qualityRank = v.quality
@@ -291,28 +310,26 @@ class GameDayVoiceEngine(context: Context) {
       return
     }
 
-    val selectedVoiceId = item.settingsSnapshot.selectedSystemVoiceId
-    if (!selectedVoiceId.isNullOrBlank()) {
-      voiceMapById[selectedVoiceId]?.let { v ->
-        runCatching { engine.voice = v }
+    val plan = VoiceCastingResolver.resolveForSettings(
+      settings = item.settingsSnapshot,
+      installedVoices = installedDescriptors
+    )
+    val targetVoice = plan.voiceId?.let { voiceMapById[it] } ?: defaultEngineVoice
+    val fallbackLocale = when (plan.fallbackCountry.uppercase()) {
+      "GB" -> Locale.UK
+      "AU" -> Locale.forLanguageTag("en-AU")
+      else -> Locale.US
+    }
+    if (targetVoice != null) {
+      runCatching { engine.voice = targetVoice }.onFailure {
+        runCatching { engine.language = fallbackLocale }
       }
     } else {
-      runCatching { engine.language = Locale.US }
+      runCatching { engine.language = fallbackLocale }
     }
 
-    val persona = item.settingsSnapshot.voicePersona
-    val rate = if (persona == VoicePersona.CUSTOM_TUNED) {
-      item.settingsSnapshot.customSpeechRate
-    } else {
-      persona.speechRate
-    }
-    val pitch = if (persona == VoicePersona.CUSTOM_TUNED) {
-      item.settingsSnapshot.customPitch
-    } else {
-      persona.pitch
-    }
-    engine.setSpeechRate(rate.coerceIn(0.6f, 1.8f))
-    engine.setPitch(pitch.coerceIn(0.6f, 1.6f))
+    engine.setSpeechRate(plan.speechRate.coerceIn(0.6f, 1.8f))
+    engine.setPitch(plan.pitch.coerceIn(0.6f, 1.6f))
 
     val doneDeferred = CompletableDeferred<Unit>()
     currentUtteranceDone = doneDeferred
