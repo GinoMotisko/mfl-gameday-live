@@ -82,9 +82,9 @@ object DiagnosticsLogger {
   private var previousHandler: Thread.UncaughtExceptionHandler? = null
   private var initialized = false
 
-  // Redacts passwords, API keys, and MFL cookies from URLs/messages
+  // Redacts usernames, passwords, API keys, and MFL cookies from URLs/messages
   private val secretParamRegex = Regex(
-    """(?i)(PASSWORD|APIKEY|MFL_USER_ID)=([^&\s;"']+)"""
+    """(?i)(USERNAME|PASSWORD|APIKEY|MFL_USER_ID)=([^&\s;"']+)"""
   )
 
   fun install(context: Context) {
@@ -138,8 +138,12 @@ object DiagnosticsLogger {
     record(LogLevel.WARN, subsystem, message, detail)
 
   fun error(subsystem: LogSubsystem, message: String, throwable: Throwable? = null) {
+    val redactedMsg = redactSecrets(message)
     val trace = throwable?.let { stackTraceString(it).take(1200) }
-    record(LogLevel.ERROR, subsystem, message, trace)
+    record(LogLevel.ERROR, subsystem, redactedMsg, trace)
+    if (throwable != null) {
+      GameDayFirebaseBridge.recordHandledError(subsystem, redactedMsg, throwable)
+    }
   }
 
   private fun record(level: LogLevel, subsystem: LogSubsystem, message: String, detail: String?) {
@@ -150,6 +154,9 @@ object DiagnosticsLogger {
       message = redactSecrets(message),
       detail = detail?.let(::redactSecrets)
     )
+    if (level != LogLevel.INFO || subsystem == LogSubsystem.APP || subsystem == LogSubsystem.SERVICE) {
+      GameDayFirebaseBridge.logBreadcrumb(level, subsystem, entry.message)
+    }
     entriesDeque.addLast(entry)
     while (entriesDeque.size > MAX_ENTRIES) {
       entriesDeque.pollFirst()

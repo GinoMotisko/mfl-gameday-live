@@ -25,10 +25,12 @@ MFL-GameDay-Android-app/
 │       │   │   │   ├── GameDayStorage.kt             # Android Keystore AES-GCM credential vault & self-healing cache
 │       │   │   │   ├── LenientJson.kt                # Polymorphic OneOrMany & lenient MFL wire decoders
 │       │   │   │   ├── MflApiClient.kt               # Throttled/retry-hardened MFL login, myleagues, league, liveScoring
+│       │   │   │   ├── ProfileSyncCodec.kt           # Secret-free cross-device & cross-edition JSON setup export/import
 │       │   │   │   └── ScoringBreakdownParser.kt     # HTML parser for MFL live_scoring_summary category points
 │       │   │   ├── diagnostics/
 │       │   │   │   ├── DiagnosticsLogger.kt          # Uncaught crash logger, secret-redacted ring buffer & share/copy export
-│       │   │   │   └── GameDayTelemetry.kt           # Non-PII feed latency, poll health & opt-in anonymous telemetry reporter
+│       │   │   │   ├── GameDayFirebaseBridge.kt      # Ad-ID-free Google Firebase Crashlytics & Analytics bridge
+│       │   │   │   └── GameDayTelemetry.kt           # Non-PII feed latency, poll health & Firebase heartbeat sync
 │       │   │   ├── engine/
 │       │   │   │   ├── BestBallAndPaceCalculator.kt  # Win probability, pace projections, Best Ball & Cross-League Exposure
 │       │   │   │   ├── DemoSimulatorData.kt          # Dual-league showcase dataset + live burst play generator
@@ -72,6 +74,7 @@ MFL-GameDay-Android-app/
 │       ├── test/kotlin/com/mflgameday/live/
 │       │   ├── data/ClayPackAndPositionsTest.kt          # 25-position MFL taxonomy & MockWebServer ETag delta manifest tests
 │       │   ├── data/MflAndEspnPipelineIntegrationTest.kt # MockWebServer MFL + ESPN + HTML breakdown pipeline tests
+│       │   ├── data/ProfileSyncCodecTest.kt              # Secret-stripping, URL allowlist & clamping unit tests
 │       │   ├── diagnostics/DiagnosticsAndLogoTest.kt     # Secret redaction & 32-team NFL logo / headshot tests
 │       │   ├── engine/EventDifferAndSpeechTest.kt        # Pure unit tests for EventDiffer, Speech, Best Ball & Conflicts
 │       │   ├── service/ServiceLifecyclePolicyTest.kt     # Home-background vs Recents swipe-close & projection pace tests

@@ -19,6 +19,8 @@ local.properties
 *.keystore
 *.dpapi
 *service-account*.json
+/app/google-services.json
+google-services.json
 .env
 .env.*
 keystore.properties

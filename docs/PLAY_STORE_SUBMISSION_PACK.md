@@ -1,4 +1,4 @@
-# Google Play Console Submission Pack — GameDay Live (`v1.3.1` / `versionCode = 11`)
+# Google Play Console Submission Pack — GameDay Live (`v1.3.2` / `versionCode = 12`)
 
 Prepared for **Motisko Ventures LLC** (Google Play Developer Account ID `7669036577809025288`, D-U-N-S `14-685-6313`).
 Every field below is audited against Google Play's 2026 Impersonation/IP, Metadata, Data Safety, and Android 14–16 (`targetSdk = 36`) Foreground Service policies.
@@ -9,11 +9,11 @@ Every field below is audited against Google Play's 2026 Impersonation/IP, Metada
 
 All uploadable artifacts are staged in both `dist/play-store-kit/` and `OneDrive/Motisko Ventures LLC/Google-Play-Console-Kit/2-App-Bundle-And-Store-Graphics/`:
 
-1. **Signed Android App Bundle (`.aab`)**: `GameDay-Live-PlayStore-v1.3.1.aab`
+1. **Signed Android App Bundle (`.aab`)**: `GameDay-Live-PlayStore-v1.3.2.aab`
    - `applicationId`: `com.motiskoventures.gameday`
-   - `versionName`: `1.3.1` (`versionCode = 11`)
+   - `versionName`: `1.3.2` (`versionCode = 12`)
    - Signing Key SHA-256: `4ffddda61399a4b04cf9a530ad68727f702d6dbbf6754107500265a7e2e350eb`
-2. **R8 Deobfuscation Mapping File**: `mapping-playStoreRelease-v1.3.1.txt`
+2. **R8 Deobfuscation Mapping File**: `mapping-playStoreRelease-v1.3.2.txt`
    - Upload alongside the `.aab` under *App bundle explorer -> Downloads / Reobfuscation file* so Android Vitals stack traces show exact Kotlin line numbers.
 3. **Hi-Res App Icon (`512 × 512` PNG)**: `icon-512x512.png`
 4. **Feature Graphic (`1024 × 500`, 24-bit RGB PNG, no alpha)**: `feature-graphic-1024x500.png`
@@ -97,12 +97,14 @@ All uploadable artifacts are staged in both `dist/play-store-kit/` and `OneDrive
 ### C) Data Safety (`Policy -> App content -> Data safety`)
 - **Does your app collect or share any of the required user data types?** -> **`Yes`**
 - **Does your app allow users to create an account?** -> **`No`** *(Ensures Google does not require a web account-deletion URL)*
-- **Data Types Collected**:
-  - Category `App info and performance` -> Check **`Crash logs`** and **`Diagnostics`** ONLY.
-- **Per-Type Answers (same for both `Crash logs` and `Diagnostics`)**:
-  - Collected or Shared? -> **`Collected`** *(Never shared with third parties)*
+- **Data Types Collected** *(Google Firebase Crashlytics + Google Analytics for Firebase, with `AD_ID` stripped)*:
+  - Category `App info and performance` -> Check **`Crash logs`** and **`Diagnostics`**
+  - Category `App activity` -> Check **`App interactions`**
+  - Category `Device or other IDs` -> Check **`Device or other IDs`** *(non-advertising Firebase App Instance ID only)*
+- **Per-Type Answers (same for all checked types)**:
+  - Collected or Shared? -> **`Collected`** *(Never shared with third parties; zero Advertising ID)*
   - Processed ephemerally? -> **`No`**
-  - Required or Optional? -> **`Users can choose whether this data is collected`** *(Opt-in toggle in Settings is OFF by default)*
+  - Required or Optional? -> **`Users can choose whether this data is collected`** *(Toggle in `Settings -> Help & Sync` disables collection & deletes unsent reports/analytics ID)*
   - Purpose? -> **`App functionality`** and **`Analytics`**
 - **Is all of the user data collected by your app encrypted in transit?** -> **`Yes`** (`HTTPS/TLS`)
 

@@ -1,6 +1,9 @@
 package com.mflgameday.live.ui.screens.settings
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -49,6 +52,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -94,8 +98,11 @@ fun MyLeaguesPane(
   coordinator: GameDayCoordinator,
   onOpenAddLeague: () -> Unit
 ) {
+  val context = LocalContext.current
   val ext = LocalGameDayColors.current
   var pendingRemoveLeague by remember { mutableStateOf<LeagueConfig?>(null) }
+  var showImportDialog by rememberSaveable { mutableStateOf(false) }
+  var profileSyncFeedback by remember { mutableStateOf<String?>(null) }
 
   Column(verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -183,6 +190,144 @@ fun MyLeaguesPane(
         }
       }
     }
+
+    // 2-Tap Secret-Free Cross-Device & Cross-Edition Profile Sync
+    Surface(
+      color = ext.cardSurface,
+      shape = RoundedCornerShape(14.dp),
+      modifier = Modifier
+        .fillMaxWidth()
+        .border(1.dp, ext.cardBorder, RoundedCornerShape(14.dp))
+    ) {
+      Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+          text = "Sync Setup Across Phone & Tablet (No Passwords)",
+          style = MaterialTheme.typography.titleSmall,
+          fontWeight = FontWeight.ExtraBold
+        )
+        Text(
+          text = "Clone your tracked leagues, commentator voice, broadcast preset & theme to another device or edition in 2 taps. Passwords, cookies, and API keys never leave this device.",
+          style = MaterialTheme.typography.bodySmall,
+          color = ext.subtleText
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          FilledTonalButton(
+            onClick = {
+              val jsonPayload = coordinator.exportSetupProfileJson()
+              runCatching {
+                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("GameDay Setup Profile", jsonPayload))
+              }
+              runCatching {
+                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                  type = "text/plain"
+                  putExtra(Intent.EXTRA_SUBJECT, "GameDay Live — Setup Profile")
+                  putExtra(Intent.EXTRA_TEXT, jsonPayload)
+                }
+                context.startActivity(Intent.createChooser(sendIntent, "Share GameDay Setup Profile"))
+              }
+              profileSyncFeedback = "Copied & ready to share via Quick Share, Messages, or Email."
+            }
+          ) {
+            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Export / Share Setup")
+          }
+          OutlinedButton(onClick = { showImportDialog = true }) {
+            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Import Setup")
+          }
+        }
+        if (!profileSyncFeedback.isNullOrBlank()) {
+          Text(
+            text = profileSyncFeedback.orEmpty(),
+            style = MaterialTheme.typography.labelSmall,
+            color = ext.turfAccent,
+            fontWeight = FontWeight.SemiBold
+          )
+        }
+      }
+    }
+  }
+
+  if (showImportDialog) {
+    var rawProfileInput by rememberSaveable { mutableStateOf("") }
+    var importError by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+      onDismissRequest = { showImportDialog = false },
+      title = { Text("Import Setup Profile", fontWeight = FontWeight.ExtraBold) },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+          Text(
+            text = "Paste a GameDay Live profile JSON exported from your phone, tablet, or other edition.",
+            style = MaterialTheme.typography.bodySmall,
+            color = ext.subtleText
+          )
+          FilledTonalButton(
+            onClick = {
+              runCatching {
+                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val clipText = cm.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+                if (clipText.isNotBlank()) {
+                  rawProfileInput = clipText
+                  importError = null
+                } else {
+                  importError = "Clipboard is empty — copy an exported profile JSON first."
+                }
+              }
+            }
+          ) {
+            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Paste From Clipboard")
+          }
+          OutlinedTextField(
+            value = rawProfileInput,
+            onValueChange = {
+              rawProfileInput = it
+              importError = null
+            },
+            label = { Text("Profile JSON") },
+            placeholder = { Text("{\"schemaVersion\": 1, ...}") },
+            minLines = 4,
+            maxLines = 7,
+            modifier = Modifier.fillMaxWidth()
+          )
+          if (!importError.isNullOrBlank()) {
+            Text(
+              text = importError.orEmpty(),
+              style = MaterialTheme.typography.labelSmall,
+              color = MaterialTheme.colorScheme.error,
+              fontWeight = FontWeight.Bold
+            )
+          }
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { showImportDialog = false }) {
+          Text("Cancel")
+        }
+      },
+      confirmButton = {
+        Button(
+          enabled = rawProfileInput.isNotBlank(),
+          onClick = {
+            coordinator.importSetupProfileJson(rawProfileInput)
+              .onSuccess { count ->
+                profileSyncFeedback = "Imported setup profile ($count league(s) & voice preferences applied)."
+                showImportDialog = false
+              }
+              .onFailure { err ->
+                importError = err.message ?: "Invalid profile JSON."
+              }
+          }
+        ) {
+          Text("Import & Apply")
+        }
+      }
+    )
   }
 
   val targetRemove = pendingRemoveLeague
@@ -563,17 +708,10 @@ fun HelpSyncAndAdvancedPane(
         HorizontalDivider(color = ext.cardBorder)
         SettingToggleRow(
           title = "Share Anonymous Crash & Feed Health Reports",
-          subtitle = "Optional redacted diagnostics to Motisko Ventures LLC (never shares logins or league IDs)",
+          subtitle = "Google Firebase Crashlytics & reliability metrics (zero Ad ID, logins, or league IDs)",
           checked = settings.optInAnonymousTelemetry,
           onCheckedChange = { enabled ->
             coordinator.updateSettings { it.copy(optInAnonymousTelemetry = enabled) }
-            if (enabled) {
-              GameDayTelemetry.maybeSendAutoHeartbeat(
-                operatingMode = settings.operatingMode.name,
-                optInEnabled = true,
-                lastCrash = uiState.lastCrashReport
-              )
-            }
           }
         )
         if (!uiState.telemetryBeaconStatus.isNullOrBlank()) {
@@ -618,10 +756,7 @@ fun HelpSyncAndAdvancedPane(
         }
         OutlinedButton(
           onClick = {
-            GameDayTelemetry.sendManualSnapshotNow(
-              operatingMode = settings.operatingMode.name,
-              lastCrash = uiState.lastCrashReport
-            )
+            coordinator.syncTelemetrySnapshotNow()
           }
         ) {
           Text("Send Health Snapshot")

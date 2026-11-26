@@ -24,22 +24,26 @@ import org.junit.Test
 class ServiceLifecyclePolicyTest {
 
   @Test
-  fun defaultSettings_stopsWhenSwipedClosed_andTelemetryDefaultsOptOut() {
+  fun defaultSettings_stopsWhenSwipedClosed_andAnonymousFirebaseTelemetryCanBeOptedOut() {
     val defaults = GameDaySettings()
     assertTrue("Background service should default ON for Home/screen-off use", defaults.runInBackgroundService)
     assertTrue("Swiping closed from Recents should default to stopping voice & polling", defaults.stopWhenSwipedClosed)
-    assertFalse("Cloud telemetry must default to opt-in (false) for privacy", defaults.optInAnonymousTelemetry)
+    assertTrue("Anonymous Ad-ID-free Firebase crash/reliability telemetry defaults ON with user opt-out", defaults.optInAnonymousTelemetry)
     assertTrue(ServiceLifecyclePolicy.shouldStopOnTaskRemoved(defaults))
   }
 
   @Test
-  fun legacySettingsJsonWithoutSwipeFlag_defaultsToStoppingOnTaskRemoved() {
+  fun legacySettingsJsonWithoutSwipeFlag_defaultsToStoppingOnTaskRemoved_andHonorsExplicitTelemetryOptOut() {
     val legacyJson = """{"operatingMode":"MFL_AND_NFL_LIVE","runInBackgroundService":true}"""
     val decoded = LenientJson.parser.decodeFromString(GameDaySettings.serializer(), legacyJson)
     assertTrue(decoded.runInBackgroundService)
     assertTrue(decoded.stopWhenSwipedClosed)
-    assertFalse(decoded.optInAnonymousTelemetry)
+    assertTrue(decoded.optInAnonymousTelemetry)
     assertTrue(ServiceLifecyclePolicy.shouldStopOnTaskRemoved(decoded))
+
+    val optedOutJson = """{"operatingMode":"MFL_AND_NFL_LIVE","optInAnonymousTelemetry":false}"""
+    val optedOutDecoded = LenientJson.parser.decodeFromString(GameDaySettings.serializer(), optedOutJson)
+    assertFalse(optedOutDecoded.optInAnonymousTelemetry)
   }
 
   @Test

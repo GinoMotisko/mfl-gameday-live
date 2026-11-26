@@ -13,7 +13,7 @@ GameDay Live builds **two distinct signed Android product flavors** from a singl
 | **`direct`** | `com.mflgameday.live` | GitHub Releases & `https://www.motisko.com/gameday` (`/gameday/apk`) | Full 32-team ESPN NFL shield logos, player headshots, and optional `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` helper. |
 | **`playStore`** | `com.motiskoventures.gameday` | Google Play Store (`Motisko Ventures LLC`, Account ID `7669036577809025288`) | `IS_PLAY_STORE_BUILD = true`: stylized team-color vector monograms & player initials, Play-compliant manifest (`app/src/playStore/AndroidManifest.xml`), scoped `network_security_config.xml`. |
 
-> **Important Upgrade Note**: Because `direct` and `playStore` use separate `applicationId` values, they install side-by-side on Android devices and do **not** overwrite or migrate settings into each other in-place. Never promise an in-place upgrade between GitHub APK and Google Play installs.
+> **Important Upgrade Note**: Because `direct` and `playStore` use separate `applicationId` values, they install side-by-side on Android devices and do **not** overwrite each other in-place. Users can clone their tracked leagues, commentator voice, and preferences across devices or editions in 2 taps via `Settings -> My Leagues -> Export / Share Setup` (`ProfileSyncCodec`, zero credentials exported). Never promise an automatic OS-level in-place upgrade between GitHub APK and Google Play installs.
 
 ---
 
@@ -66,7 +66,7 @@ Whenever publishing a new GitHub Release (`vX.Y.Z` marked `--latest`):
    - Always use `nonCancellingCatching` (rethrowing `CancellationException`) and `canEmitForCycle(cycleGen)` around suspend network calls so cancelled polls can never speak after swipe-close.
 2. **Privacy, Backup & Telemetry (`AndroidManifest.xml`, `data_extraction_rules.xml`, `GameDayTelemetry`)**:
    - `android:allowBackup="false"` and explicit `<exclude>` rules in `backup_rules.xml` & `data_extraction_rules.xml` prevent encrypted MFL cookies, API keys, and logs from ever leaving the device via cloud backup or device transfer.
-   - `GameDayTelemetry` tracks strictly non-PII feed latency/poll health locally and only posts to `https://www.motisko.com/api/gameday/telemetry` when the user explicitly opts in (`optInAnonymousTelemetry = true`) or taps *Send Health Snapshot*.
+   - `GameDayTelemetry` tracks strictly non-PII feed latency/poll health locally, while `GameDayFirebaseBridge` reports anonymous crash stack traces and reliability metrics to Google Firebase Crashlytics & Analytics (`AD_ID` stripped + `adid`/`ssaid`/ad-personalization disabled; user opt-out toggle in `Settings -> Help & Sync`). `app/google-services.json` stays git-ignored locally & vaulted in 1Password (`Motisko Ventures`), while `scripts/verify.sh` injects a temporary stub in keyless CI.
 3. **Living Docs**: Keep `docs/architecture_map.md` and `docs/project_structure.md` updated whenever modules or flows change.
 4. **Bounded Pre-PR Subagent Review & Codex Sync**:
    - Before cutting a release, run an independent read-only `research` subagent review focused strictly on P0/P1 runtime, security, and Google Play policy defects (max 2 iterations — never loop endlessly on style nitpicks).
