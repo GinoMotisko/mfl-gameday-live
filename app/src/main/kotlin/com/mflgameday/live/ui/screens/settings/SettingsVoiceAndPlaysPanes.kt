@@ -174,10 +174,11 @@ fun AnnouncerAndVoicePane(
           value = displayedRate,
           onValueChange = { r ->
             coordinator.updateSettings {
-              it.copy(
-                voicePersona = VoicePersona.CUSTOM_TUNED,
-                customSpeechRate = r.coerceIn(0.70f, 1.50f),
-                customPitch = displayedPitch
+              VoiceCastingResolver.applyCustomTuning(
+                current = it,
+                newRate = r,
+                newPitch = displayedPitch,
+                resolvedPlans = resolvedPlans
               )
             }
           },
@@ -189,10 +190,11 @@ fun AnnouncerAndVoicePane(
           value = displayedPitch,
           onValueChange = { p ->
             coordinator.updateSettings {
-              it.copy(
-                voicePersona = VoicePersona.CUSTOM_TUNED,
-                customSpeechRate = displayedRate,
-                customPitch = p.coerceIn(0.70f, 1.40f)
+              VoiceCastingResolver.applyCustomTuning(
+                current = it,
+                newRate = displayedRate,
+                newPitch = p,
+                resolvedPlans = resolvedPlans
               )
             }
           },

@@ -154,6 +154,7 @@ object VoiceCastingResolver {
       val matchedDesc = installedVoices.firstOrNull { it.id == manualId }
       return basePlan.copy(
         voiceId = manualId,
+        fallbackCountry = matchedDesc?.country?.takeIf { it.isNotBlank() } ?: basePlan.fallbackCountry,
         speechRate = rate,
         pitch = pitch,
         isStudioHd = matchedDesc?.let { it.quality >= 400 } ?: basePlan.isStudioHd,
@@ -162,6 +163,27 @@ object VoiceCastingResolver {
     }
 
     return basePlan.copy(speechRate = rate, pitch = pitch)
+  }
+
+  /**
+   * Preserves the active commentator's resolved neural voice ID when the user nudges
+   * speed or pitch sliders (entering `CUSTOM_TUNED`), so tuning Nigel or Callie never
+   * unexpectedly reverts their accent or speaker back to David.
+   */
+  fun applyCustomTuning(
+    current: GameDaySettings,
+    newRate: Float,
+    newPitch: Float,
+    resolvedPlans: Map<VoicePersona, ResolvedVoicePlan>
+  ): GameDaySettings {
+    val preservedVoiceId = current.selectedSystemVoiceId?.takeIf { it.isNotBlank() }
+      ?: resolvedPlans[current.voicePersona]?.voiceId
+    return current.copy(
+      voicePersona = VoicePersona.CUSTOM_TUNED,
+      selectedSystemVoiceId = preservedVoiceId,
+      customSpeechRate = newRate.coerceIn(0.70f, 1.50f),
+      customPitch = newPitch.coerceIn(0.70f, 1.40f)
+    )
   }
 
   private fun scoreVoiceForPersona(persona: VoicePersona, voice: InstalledVoiceDescriptor): Int {

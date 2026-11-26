@@ -56,6 +56,20 @@ class VoiceAndFieldVisualPolicyTest {
     assertEquals("en-gb-x-gbd-local", cast[VoicePersona.LONDON_CALLING]?.voiceId)
     assertEquals("en-au-x-aud-local", cast[VoicePersona.AUSSIE_SIDELINE]?.voiceId)
     assertEquals("en-us-x-tpf-local", cast[VoicePersona.FILM_ROOM]?.voiceId)
+
+    // Fine-tuning Nigel's speed must preserve Nigel's GB voice rather than reverting to David
+    val nigelBase = GameDaySettings(voicePersona = VoicePersona.LONDON_CALLING, selectedSystemVoiceId = null)
+    val nigelTuned = VoiceCastingResolver.applyCustomTuning(
+      current = nigelBase,
+      newRate = 1.14f,
+      newPitch = VoicePersona.LONDON_CALLING.pitch,
+      resolvedPlans = cast
+    )
+    val resolvedNigelTuned = VoiceCastingResolver.resolveForSettings(nigelTuned, pixelVoices)
+    assertEquals(VoicePersona.CUSTOM_TUNED, nigelTuned.voicePersona)
+    assertEquals("en-gb-x-gbd-local", resolvedNigelTuned.voiceId)
+    assertEquals("GB", resolvedNigelTuned.fallbackCountry)
+    assertEquals(1.14f, resolvedNigelTuned.speechRate, 0.001f)
   }
 
   @Test
