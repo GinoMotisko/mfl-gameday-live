@@ -133,7 +133,8 @@ class GameDayLiveService : LifecycleService() {
         isBroadcastPaused = state.isBroadcastPaused,
         nflGames = state.nflGames,
         nowMillis = now,
-        isSpeakingNow = isSpeaking
+        isSpeakingNow = isSpeaking,
+        preserveWhileSlateLoading = true
       )
       if (!shouldStayForeground) {
         stop(context)
@@ -298,7 +299,8 @@ class GameDayLiveService : LifecycleService() {
       isBroadcastPaused = state.isBroadcastPaused,
       nflGames = state.nflGames,
       nowMillis = System.currentTimeMillis(),
-      isSpeakingNow = isSpeaking
+      isSpeakingNow = isSpeaking,
+      preserveWhileSlateLoading = true
     )
     if (!shouldRun) {
       markStopped()

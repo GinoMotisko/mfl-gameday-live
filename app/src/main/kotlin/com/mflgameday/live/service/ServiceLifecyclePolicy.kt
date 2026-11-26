@@ -77,17 +77,23 @@ object ServiceLifecyclePolicy {
    * Whether `GameDayLiveService` (`mediaPlayback` Foreground Service + WakeLock + persistent notification)
    * should currently be active. Stays alive while `isSpeakingNow` so a Final Score call is never clipped
    * right as the last game flips to `FINAL`, then tears down immediately once speech finishes.
+   *
+   * When [preserveWhileSlateLoading] is `true` (used for an already-promoted `START_STICKY` OS service
+   * recreation whose initial scoreboard fetch is still in flight), keeps the recreated service alive
+   * while `nflGames.isEmpty()` until the first poll resolves whether games are active.
    */
   fun shouldRunForegroundService(
     settings: GameDaySettings,
     isBroadcastPaused: Boolean,
     nflGames: List<NflGameState>,
     nowMillis: Long,
-    isSpeakingNow: Boolean = false
+    isSpeakingNow: Boolean = false,
+    preserveWhileSlateLoading: Boolean = false
   ): Boolean {
     if (settings.operatingMode == OperatingMode.UNCONFIGURED) return false
     if (!settings.runInBackgroundService) return false
     if (isBroadcastPaused) return false
+    if (preserveWhileSlateLoading && nflGames.isEmpty()) return true
     return isSpeakingNow || isWithinActiveBroadcastWindow(settings.operatingMode, nflGames, nowMillis)
   }
 

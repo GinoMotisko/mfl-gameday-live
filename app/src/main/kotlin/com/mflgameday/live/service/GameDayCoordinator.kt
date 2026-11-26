@@ -1517,18 +1517,20 @@ class GameDayCoordinator(
     val state = _uiState.value
     val s = state.settings
     val isSpeaking = state.isSpeakingNow || voiceEngine.hasActiveOrPendingSpeech()
+    val alreadyForegroundOrPending = GameDayLiveService.isRunningInForeground || GameDayLiveService.isStartPending
     val shouldRun = ServiceLifecyclePolicy.shouldRunForegroundService(
       settings = s,
       isBroadcastPaused = state.isBroadcastPaused,
       nflGames = state.nflGames,
       nowMillis = nowMillis,
-      isSpeakingNow = isSpeaking
+      isSpeakingNow = isSpeaking,
+      preserveWhileSlateLoading = alreadyForegroundOrPending
     )
     if (
       ServiceLifecyclePolicy.shouldDispatchStartForegroundService(
         settings = s,
         isBroadcastPaused = state.isBroadcastPaused,
-        isServiceAlreadyForeground = GameDayLiveService.isRunningInForeground || GameDayLiveService.isStartPending,
+        isServiceAlreadyForeground = alreadyForegroundOrPending,
         nflGames = state.nflGames,
         nowMillis = nowMillis,
         isSpeakingNow = isSpeaking

@@ -135,6 +135,16 @@ class ServiceLifecyclePolicyTest {
       )
     )
     assertTrue(
+      "OS-recreated START_STICKY service must stay alive while initial scoreboard fetch is still in flight",
+      ServiceLifecyclePolicy.shouldRunForegroundService(
+        settings = settings,
+        isBroadcastPaused = false,
+        nflGames = emptyList(),
+        nowMillis = now,
+        preserveWhileSlateLoading = true
+      )
+    )
+    assertTrue(
       "Must retain background retry loop when scoreboard has not yet loaded (offline/transient failure)",
       ServiceLifecyclePolicy.shouldKeepPollingInBackground(
         settings = settings,
