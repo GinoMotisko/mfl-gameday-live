@@ -681,7 +681,8 @@ class GameDayCoordinator(
       )
     }
     if (_uiState.value.settings.operatingMode != OperatingMode.DEMO_SIMULATOR) {
-      refreshNow()
+      differ.clearFantasyMatchupLeaderForLeague(leagueId)
+      restartPollingLoop()
     }
   }
 
@@ -1679,7 +1680,7 @@ class GameDayCoordinator(
       }
     }
 
-    val combinedLog = (newEntries.reversed() + state.playLog).take(250)
+    val combinedLog = EventDiffer.mergePlayLogEntries(newEntries, state.playLog, maxEntries = 250)
     val bannerCandidate = newEntries.lastOrNull {
       !it.event.isSilentBackfill && (
         it.event.kind == GameEventKind.TOUCHDOWN ||

@@ -55,6 +55,11 @@ class EventDiffer(
     previousMatchupLeaderByKey.clear()
   }
 
+  fun clearFantasyMatchupLeaderForLeague(leagueId: String) {
+    val prefix = "${leagueId}_"
+    previousMatchupLeaderByKey.keys.removeIf { it.startsWith(prefix) }
+  }
+
   /**
    * Pre-populates seen play IDs from persisted PlayLog history so restarting the app mid-game
    * never re-announces plays that were already logged earlier in the quarter.
@@ -484,6 +489,20 @@ class EventDiffer(
       PlayKind.FIRST_DOWN -> GameEventKind.FIRST_DOWN
       PlayKind.FOURTH_DOWN_STOP -> GameEventKind.FOURTH_DOWN_STOP
       PlayKind.OTHER -> null
+    }
+
+    fun mergePlayLogEntries(
+      newEntries: List<PlayLogEntry>,
+      existingLog: List<PlayLogEntry>,
+      maxEntries: Int = 250
+    ): List<PlayLogEntry> {
+      val combined = newEntries.reversed() + existingLog
+      val ordered = if (newEntries.any { it.event.isSilentBackfill }) {
+        combined.sortedByDescending { it.timestampMillis }
+      } else {
+        combined
+      }
+      return ordered.take(maxEntries)
     }
   }
 }

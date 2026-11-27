@@ -775,4 +775,33 @@ class EventDifferAndSpeechTest {
     val intInvolved = BestBallAndPaceCalculator.findInvolvedExposures(intEvent, intExposures)
     assertEquals(setOf("15900", "16006"), intInvolved.map { it.player.id }.toSet())
   }
+
+  @Test
+  fun mergePlayLogEntries_sortsSilentBackfillChronologicallyBelowFreshPlays() {
+    val game = sampleGame()
+    fun makeEntry(id: String, ts: Long, silent: Boolean) = com.mflgameday.live.model.PlayLogEntry(
+      id = id,
+      timestampMillis = ts,
+      event = com.mflgameday.live.model.GameEvent(
+        id = id,
+        kind = GameEventKind.TOUCHDOWN,
+        game = game,
+        team = game.home,
+        awayScore = 0,
+        homeScore = 7,
+        observedAtMillis = ts,
+        isSilentBackfill = silent
+      ),
+      spokenText = "Call $id",
+      wasSpoken = !silent
+    )
+
+    val existing = listOf(makeEntry("existing_mid", t0 + 300_000L, silent = false))
+    val newBatch = listOf(
+      makeEntry("fresh_top", t0 + 600_000L, silent = false),
+      makeEntry("backfill_old", t0 - 900_000L, silent = true)
+    )
+    val merged = EventDiffer.mergePlayLogEntries(newBatch, existing, maxEntries = 250)
+    assertEquals(listOf("fresh_top", "existing_mid", "backfill_old"), merged.map { it.id })
+  }
 }
