@@ -543,4 +543,357 @@ class MflAndEspnPipelineIntegrationTest {
     assertEquals(null, MflApiClient.normalizeFranchiseId("0000"))
     assertEquals(null, MflApiClient.normalizeFranchiseId(null))
   }
+
+  @Test
+  fun mflLiveStatsBreakdownCalculator_computesExactBenchPlayerAndTeamDefenseBreakdowns() {
+    val ajaxHtml = """
+      <script type="text/javascript">
+      var xmlBaseURL = 'https://www43.myfantasyleague.com/fflnetdynamic2026/';
+      var ls_nfl_games = [];
+      ls_nfl_games["BUF"] = [];
+      ls_nfl_games["BUF"].opp = "KCC";
+      ls_nfl_games["DEN"] = [];
+      ls_nfl_games["DEN"].opp = "PIT";
+      ls_nfl_games["PIT"] = [];
+      ls_nfl_games["PIT"].opp = "DEN";
+      ls_nfl_games["LAR"] = [];
+      ls_nfl_games["LAR"].opp = "GBP";
+      var ls_cat_desc = {
+        '#P' : "Passing TDs",
+        'PY' : "Passing Yards",
+        '#C' : "Receiving TDs",
+        'CC' : "Completions",
+        'CY' : "Receiving Yards",
+        'RY' : "Rushing Yards",
+        'FG' : "yd Field Goal",
+        'IC' : "Interceptions",
+        'FC' : "Fumble Recoveries (from Opponent)",
+        'SK' : "Sacked a QB",
+        'TPA' : "Total Points Allowed",
+        'DIF' : "Point Differential"
+      };
+      var ls_list_cats = {
+        'FR' : 1,
+        'FG' : 1
+      };
+      var ls_team_pos = { QB:0,RB:0,WR:0,PK:0,TE:0,Def:1 };
+      var ls_uses_idps = 0;
+      ls_player["13595"] = new LSPlayer("13595","Rudolph, Mason", "QB", "PIT", "QB");
+      ls_player["14102"] = new LSPlayer("14102","Metcalf, DK", "WR", "PIT", "WR");
+      ls_player["15111"] = new LSPlayer("15111","Boswell, Chris", "PK", "PIT", "PK");
+      ls_player["0504"] = new LSPlayer("0504","Bills", "Def", "BUF", "Def");
+      ls_player["0528"] = new LSPlayer("0528","Rams", "Def", "LAR", "Def");
+
+      function score_player(pid,ppos) {
+        var points = 0;
+        var val = undefined;
+        if(/QB|RB|WR|PK/.test(ppos)) {
+           if(ls_stats[pid] != undefined) {
+              val = ls_stats[pid]["#P"];
+              points += ls_get_points("#P", val, "0", "10", "*4", "");
+              val = ls_stats[pid]["PY"];
+              points += ls_get_points("PY", val, "0", "999", "*0.05", "");
+              val = ls_stats[pid]["CC"];
+              points += ls_get_points("CC", val, "0", "99", "*1", "");
+              val = ls_stats[pid]["#C"];
+              points += ls_get_points("#C", val, "0", "10", "*6", "");
+              val = ls_stats[pid]["CY"];
+              points += ls_get_points("CY", val, "0", "999", "*0.1", "");
+              val = ls_stats[pid]["RY"];
+              points += ls_get_points("RY", val, "0", "999", "1/25", "");
+              if (ls_stats[pid]["FG"] !== undefined) {
+                 var vals = ls_stats[pid]["FG"].split(",");
+                 for(var i in vals) {
+                    val = vals[i];
+              points += ls_get_points("FG", val, "0", "39", "3", "");
+              points += ls_get_points("FG", val, "40", "49", "4", "");
+              points += ls_get_points("FG", val, "50", "59", "5", "");
+                 }
+              }
+          }
+        }
+        if(ppos == "Def") {
+           var opp = ls_nfl_games[pid].opp;
+           if(ls_tstats[pid] != undefined) {
+              val = ls_tstats[pid]["TPA"];
+              if(val == undefined) { val = "0"; }
+              points += ls_get_points("TPA", val, "0", "1", "10", "");
+              points += ls_get_points("TPA", val, "2", "6", "7", "");
+              points += ls_get_points("TPA", val, "7", "13", "4", "");
+              val = ls_tstats[pid]["SK"];
+              if(val == undefined) { val = "0"; }
+              points += ls_get_points("SK", val, "0", "25", "*1", "");
+              val = ls_tstats[pid]["DIF"];
+              if(val == undefined) { val = "0"; }
+              points += ls_get_points("DIF", val, "1", "99", "6", "");
+          }
+        }
+        show_math[pid] = pid_str;
+        return(points);
+      }
+      function score_player_proj(pid,ppos) {
+        return 999;
+      }
+      </script>
+    """.trimIndent()
+
+    val liveStatsTxt = "DATE|1795818455|Fri Nov 27, 2026\n" +
+      "REFRESH|40\n" +
+      "13595|#P 1\r|PY 104\r|RY 30\r|FL 0\n" +
+      "14102|#C 1\r|CC 3\r|CY 36\n" +
+      "15111|FG 47\r,33\r\n" +
+      "BUF|DIF 3|SK 1|TPA 10\n"
+
+    val rules = MflLiveStatsBreakdownCalculator.parseAjaxLeagueRules(ajaxHtml)
+    val stats = MflLiveStatsBreakdownCalculator.parseLiveWeekStats(liveStatsTxt)
+
+    assertEquals("https://www43.myfantasyleague.com/fflnetdynamic2026/", rules.xmlBaseUrl)
+    assertFalse(rules.usesIdps)
+    assertTrue("Def" in rules.teamPositions)
+
+    // Mason Rudolph (bench QB): 1 Pass TD (4.00) + 104 Pass Yds (5.20) + 30 Rush Yds int-div 1/25 (1.00)
+    val rudolph = MflLiveStatsBreakdownCalculator.computeBreakdownsForPlayer(
+      playerId = "13595",
+      rawScore = RawMflPlayerScore("13595", score = 10.20, isStarter = false, gameSecondsRemaining = 895),
+      fallbackPlayer = null,
+      rules = rules,
+      liveStats = stats
+    )
+    assertEquals(3, rudolph.size)
+    assertEquals("Passing TDs", rudolph[0].category)
+    assertEquals("1", rudolph[0].count)
+    assertEquals(4.0, rudolph[0].points, 0.001)
+    assertEquals("Passing Yards", rudolph[1].category)
+    assertEquals("104", rudolph[1].count)
+    assertEquals(5.20, rudolph[1].points, 0.001)
+    assertEquals("Rushing Yards", rudolph[2].category)
+    assertEquals("30", rudolph[2].count)
+    assertEquals(1.0, rudolph[2].points, 0.001)
+
+    // DK Metcalf (bench WR): 3 Completions (3.00) + 1 Rec TD (6.00) + 36 Rec Yds (3.60) = 12.60
+    val metcalf = MflLiveStatsBreakdownCalculator.computeBreakdownsForPlayer(
+      playerId = "14102",
+      rawScore = RawMflPlayerScore("14102", score = 12.60, isStarter = false, gameSecondsRemaining = 895),
+      fallbackPlayer = null,
+      rules = rules,
+      liveStats = stats
+    )
+    assertEquals(12.60, metcalf.sumOf { it.points }, 0.001)
+
+    // Kicker multi-FG comma list with CRLF inside list (`47\r,33`)
+    val boswell = MflLiveStatsBreakdownCalculator.computeBreakdownsForPlayer(
+      playerId = "15111",
+      rawScore = RawMflPlayerScore("15111", score = 7.0, isStarter = false, gameSecondsRemaining = 895),
+      fallbackPlayer = null,
+      rules = rules,
+      liveStats = stats
+    )
+    assertEquals(2, boswell.size)
+    assertEquals("47", boswell[0].count)
+    assertEquals(4.0, boswell[0].points, 0.001)
+    assertEquals("33", boswell[1].count)
+    assertEquals(3.0, boswell[1].points, 0.001)
+
+    // Buffalo Defense: TPA 10 (4.0) + SK 1 (1.0) + DIF 3 (6.0) = 11.0
+    val bills = MflLiveStatsBreakdownCalculator.computeBreakdownsForPlayer(
+      playerId = "0504",
+      rawScore = RawMflPlayerScore("0504", score = 11.0, isStarter = true, gameSecondsRemaining = 0),
+      fallbackPlayer = null,
+      rules = rules,
+      liveStats = stats
+    )
+    assertEquals(3, bills.size)
+    assertEquals(11.0, bills.sumOf { it.points }, 0.001)
+
+    // Scheduled Def Guard: game not started (3600s left, score 0, missing from tstats) -> MUST NOT fabricate TPA=0 (10 pts)
+    val rams = MflLiveStatsBreakdownCalculator.computeBreakdownsForPlayer(
+      playerId = "0528",
+      rawScore = RawMflPlayerScore("0528", score = 0.0, isStarter = false, gameSecondsRemaining = 3600),
+      fallbackPlayer = null,
+      rules = rules,
+      liveStats = stats
+    )
+    assertTrue("Scheduled team defense must not emit pre-kickoff TPA points", rams.isEmpty())
+  }
+
+  @Test
+  fun mflFetchScoringBreakdowns_hydratesMissingBenchPlayersViaAjaxLsAndLiveStatsWithRefererAndCache() = runTest {
+    val server = MockWebServer()
+    server.start()
+    try {
+      val baseUrl = server.url("/").toString().trimEnd('/')
+      val client = MflApiClient(apiBaseUrl = baseUrl, minRequestSpacingMs = 1L)
+      val config = LeagueConfig(
+        leagueId = "10479",
+        leagueName = "Wyoming Valley Conference",
+        year = 2026,
+        franchiseId = "0008",
+        franchiseName = "Cleaveland Steamers",
+        baseUrl = baseUrl
+      )
+
+      val ajaxRulesBody = """
+        <script type="text/javascript">
+        var xmlBaseURL = '$baseUrl/fflnetdynamic2026/';
+        var ls_cat_desc = { '#P' : "Passing TDs", 'PY' : "Passing Yards" };
+        var ls_list_cats = {};
+        var ls_team_pos = { QB:0,Def:1 };
+        var ls_uses_idps = 0;
+        ls_player["13595"] = new LSPlayer("13595","Rudolph, Mason", "QB", "PIT", "QB");
+        function score_player(pid,ppos) {
+          var points = 0;
+          var val = undefined;
+          if(/QB|RB|WR|PK/.test(ppos)) {
+            if(ls_stats[pid] != undefined) {
+              val = ls_stats[pid]["#P"];
+              points += ls_get_points("#P", val, "0", "10", "*4", "");
+              val = ls_stats[pid]["PY"];
+              points += ls_get_points("PY", val, "0", "999", "*0.05", "");
+            }
+          }
+          show_math[pid] = pid_str;
+          return(points);
+        }
+        </script>
+      """.trimIndent()
+
+      // Call 1: summary (starter 0504 only) -> ajax_ls -> live_stats_12.txt (hydrated bench 13595)
+      server.enqueue(
+        MockResponse().setBody(
+          """<td class="points" id="points_0504"><a title='&bull;6.00 pts for 3 Point Differential &bull;4.00 pts for 10 Total Points Allowed &bull;1.00 pts for 1 Sacked a QB'>11.00</a></td>"""
+        )
+      )
+      server.enqueue(MockResponse().setBody(ajaxRulesBody))
+      server.enqueue(MockResponse().setBody("DATE|1795818455|Now\n13595|#P 1|PY 104\n"))
+
+      // Call 2 (same week, short window): summary still omits 13595 -> ajax_ls & live_stats_12.txt MUST hit cache!
+      server.enqueue(
+        MockResponse().setBody(
+          """<td class="points" id="points_0504"><a title='&bull;6.00 pts for 3 Point Differential &bull;4.00 pts for 10 Total Points Allowed &bull;1.00 pts for 1 Sacked a QB'>11.00</a></td>"""
+        )
+      )
+
+      val rawMatchups = listOf(
+        RawMflMatchup(
+          franchises = listOf(
+            RawMflFranchiseLive(
+              franchiseId = "0010",
+              score = 89.80,
+              isHome = true,
+              playersCurrentlyPlaying = 2,
+              playersYetToPlay = 3,
+              gameSecondsRemaining = 1790,
+              players = listOf(
+                RawMflPlayerScore("0504", score = 11.00, isStarter = true, gameSecondsRemaining = 0),
+                RawMflPlayerScore("13595", score = 9.20, isStarter = false, gameSecondsRemaining = 895),
+                RawMflPlayerScore("99999", score = 0.0, isStarter = false, gameSecondsRemaining = 3600)
+              )
+            )
+          )
+        )
+      )
+
+      val firstMap = client.fetchScoringBreakdowns(config, week = 12, rawMatchups = rawMatchups)
+      assertEquals(3, firstMap["0504"].orEmpty().size)
+      val rudolphLines = firstMap["13595"].orEmpty()
+      assertEquals(2, rudolphLines.size)
+      assertEquals(4.0, rudolphLines[0].points, 0.001)
+      assertEquals(5.2, rudolphLines[1].points, 0.001)
+      assertEquals(9.20, rudolphLines.sumOf { it.points }, 0.001)
+
+      val reqSummary = server.takeRequest()
+      val reqAjax = server.takeRequest()
+      val reqStats = server.takeRequest()
+      assertTrue(reqSummary.path.orEmpty().contains("/2026/live_scoring_summary"))
+      assertTrue(reqAjax.path.orEmpty().contains("/2026/ajax_ls?L=10479&W=12"))
+      assertTrue(reqStats.path.orEmpty().contains("/fflnetdynamic2026/live_stats_12.txt"))
+      assertEquals("$baseUrl/2026/ajax_ls?L=10479&W=12", reqStats.getHeader("Referer"))
+
+      // Second call within liveStats TTL reuses both cached ajax_ls rules and cached live_stats_12.txt!
+      val secondMap = client.fetchScoringBreakdowns(config, week = 12, rawMatchups = rawMatchups)
+      assertEquals(4, server.requestCount)
+      assertEquals(9.20, secondMap["13595"].orEmpty().sumOf { it.points }, 0.001)
+
+      // Third call: second league sharing the same live_stats cache observes a newer TD score (15.20 vs cached 9.20)
+      val leagueB = config.copy(leagueId = "10480", leagueName = "Second League")
+      val updatedMatchups = listOf(
+        RawMflMatchup(
+          franchises = listOf(
+            RawMflFranchiseLive(
+              franchiseId = "0010",
+              score = 95.80,
+              isHome = true,
+              playersCurrentlyPlaying = 2,
+              playersYetToPlay = 3,
+              gameSecondsRemaining = 800,
+              players = listOf(
+                RawMflPlayerScore("13595", score = 15.20, isStarter = false, gameSecondsRemaining = 800)
+              )
+            )
+          )
+        )
+      )
+      server.enqueue(MockResponse().setBody("")) // leagueB summary omits bench
+      server.enqueue(MockResponse().setBody(ajaxRulesBody)) // leagueB ajax_ls
+      val lagRes = client.fetchScoringBreakdownsWithStatus(leagueB, week = 12, rawMatchups = updatedMatchups)
+      assertTrue(
+        "Cached live_stats lagging leagueB's score must mark incomplete so coordinator retries",
+        lagRes.hasIncompleteBenchHydration
+      )
+    } finally {
+      server.shutdown()
+    }
+  }
+
+  @Test
+  fun mflFetchScoringBreakdownsWithStatus_marksIncompleteBenchHydrationOnTransientAjaxFailure() = runTest {
+    val server = MockWebServer()
+    server.start()
+    try {
+      val baseUrl = server.url("/").toString().trimEnd('/')
+      val client = MflApiClient(apiBaseUrl = baseUrl, minRequestSpacingMs = 1L)
+      val config = LeagueConfig(
+        leagueId = "10479",
+        leagueName = "Wyoming Valley Conference",
+        year = 2026,
+        franchiseId = "0008",
+        franchiseName = "Cleaveland Steamers",
+        baseUrl = baseUrl
+      )
+      val rawMatchups = listOf(
+        RawMflMatchup(
+          franchises = listOf(
+            RawMflFranchiseLive(
+              franchiseId = "0010",
+              score = 20.20,
+              isHome = true,
+              playersCurrentlyPlaying = 1,
+              playersYetToPlay = 0,
+              gameSecondsRemaining = 895,
+              players = listOf(
+                RawMflPlayerScore("0504", score = 11.00, isStarter = true, gameSecondsRemaining = 0),
+                RawMflPlayerScore("13595", score = 9.20, isStarter = false, gameSecondsRemaining = 895)
+              )
+            )
+          )
+        )
+      )
+
+      // Summary succeeds with starter 0504, while ajax_ls returns HTTP 500 on both retry attempts
+      server.enqueue(
+        MockResponse().setBody(
+          """<td class="points" id="points_0504"><a title='&bull;4.00 pts for 10 Total Points Allowed'>4.00</a></td>"""
+        )
+      )
+      server.enqueue(MockResponse().setResponseCode(500).setBody("upstream error"))
+      server.enqueue(MockResponse().setResponseCode(500).setBody("upstream error"))
+
+      val res = client.fetchScoringBreakdownsWithStatus(config, week = 12, rawMatchups = rawMatchups)
+      assertTrue("Must flag incomplete hydration so coordinator retries next poll", res.hasIncompleteBenchHydration)
+      assertEquals(1, res.breakdowns["0504"].orEmpty().size)
+      assertTrue(res.breakdowns["13595"].isNullOrEmpty())
+    } finally {
+      server.shutdown()
+    }
+  }
 }

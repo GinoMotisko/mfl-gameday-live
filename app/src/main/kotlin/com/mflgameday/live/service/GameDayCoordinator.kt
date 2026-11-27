@@ -1504,9 +1504,11 @@ class GameDayCoordinator(
 
           val breakdownResult = if (needBreakdowns) {
             nonCancellingCatching {
-              mflClient.fetchScoringBreakdowns(
+              mflClient.fetchScoringBreakdownsWithStatus(
                 config = leagueCfg,
                 week = week,
+                rawMatchups = rawMatchups,
+                playersDb = _uiState.value.playersDb,
                 apiKey = apiKey,
                 mflUserIdCookie = cookie
               )
@@ -1518,13 +1520,18 @@ class GameDayCoordinator(
           if (!canEmitForCycle(cycleGen)) return
           GameDayTelemetry.recordMflPoll(success = true)
 
-          val previousSameWeekBreakdowns = prevSnap
+          val prevSameWeekPlayers = prevSnap
             ?.takeIf { it.week == week }
             ?.matchups
             ?.flatMap { it.franchises }
             ?.flatMap { it.starters + it.bench }
-            ?.associate { it.playerId to it.breakdowns }
             .orEmpty()
+          val previousSameWeekBreakdowns = prevSameWeekPlayers.associate { it.playerId to it.breakdowns }
+          val prevScoreByPlayer = prevSameWeekPlayers.associate { it.playerId to it.score }
+          val currentScoreByPlayer = rawMatchups
+            .flatMap { it.franchises }
+            .flatMap { it.players }
+            .associate { it.playerId to it.score }
 
           val hasNonZeroScores = rawMatchups
             .flatMap { it.franchises }
@@ -1536,10 +1543,34 @@ class GameDayCoordinator(
           val mergedBreakdowns = when {
             breakdownResult == null -> previousSameWeekBreakdowns
             breakdownResult.isSuccess -> {
-              val fetched = breakdownResult.getOrThrow()
+              val fetchRes = breakdownResult.getOrThrow()
+              val fetched = fetchRes.breakdowns
               if (fetched.isEmpty() && hasNonZeroScores) {
                 pendingBreakdownRetryByLeague.add(leagueCfg.leagueId)
                 previousSameWeekBreakdowns
+              } else if (fetchRes.hasIncompleteBenchHydration) {
+                // Bench hydration failed transiently: preserve starter summary + unchanged non-zero bench lines, and retry next cycle.
+                pendingBreakdownRetryByLeague.add(leagueCfg.leagueId)
+                val combined = HashMap<String, List<com.mflgameday.live.model.ScoringBreakdownLine>>()
+                for ((pid, prevLines) in previousSameWeekBreakdowns) {
+                  val prevScore = prevScoreByPlayer[pid]
+                  val currScore = currentScoreByPlayer[pid]
+                  if (
+                    prevLines.isNotEmpty() &&
+                    prevScore != null &&
+                    currScore != null &&
+                    kotlin.math.abs(currScore) > 0.001 &&
+                    kotlin.math.abs(prevScore - currScore) <= 0.001
+                  ) {
+                    combined[pid] = prevLines
+                  }
+                }
+                for ((pid, lines) in fetched) {
+                  if (lines.isNotEmpty()) {
+                    combined[pid] = lines
+                  }
+                }
+                combined
               } else {
                 pendingBreakdownRetryByLeague.remove(leagueCfg.leagueId)
                 fetched
