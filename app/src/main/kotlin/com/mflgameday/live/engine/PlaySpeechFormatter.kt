@@ -13,8 +13,9 @@ import com.mflgameday.live.model.NflSide
 object PlaySpeechFormatter {
 
   private sealed interface ReturnKind {
-    data class Defense(val spoken: String) : ReturnKind
-    data class SpecialTeams(val spoken: String) : ReturnKind
+    val spoken: String
+    data class Defense(override val spoken: String) : ReturnKind
+    data class SpecialTeams(override val spoken: String) : ReturnKind
   }
 
   private val returnPhrases: List<Pair<String, ReturnKind>> = listOf(
@@ -27,6 +28,19 @@ object PlaySpeechFormatter {
     "Fumble Recovery" to ReturnKind.Defense("fumble recovery"),
     "Kickoff Return" to ReturnKind.SpecialTeams("kickoff return"),
     "Punt Return" to ReturnKind.SpecialTeams("punt return")
+  )
+
+  private val endZoneReturnPhrases: List<Pair<String, ReturnKind>> = listOf(
+    "Blocked Field Goal Recovery in End Zone" to ReturnKind.SpecialTeams("blocked field goal recovery"),
+    "Blocked Punt Recovery in End Zone" to ReturnKind.SpecialTeams("blocked punt recovery"),
+    "Offensive Fumble Recovery in End Zone" to ReturnKind.Defense("fumble recovery"),
+    "Fumble Recovery in End Zone" to ReturnKind.Defense("fumble recovery"),
+    "Interception in End Zone" to ReturnKind.Defense("interception")
+  )
+
+  private val endZoneSpotRegex = Regex(
+    """\bat\s+[A-Z]{2,4}\s+-\d+\b|\bin\s+(?:the\s+)?end\s+zone\b""",
+    RegexOption.IGNORE_CASE
   )
 
   private val clauseEnds = setOf("Fumble", "Rush", "Return", "Recovery", "Interception", "Lateral")
@@ -90,9 +104,11 @@ object PlaySpeechFormatter {
     val core = when (event.kind) {
       GameEventKind.TOUCHDOWN -> {
         val afterScore = if (event.tryPending) "" else scoreSuffix
-        val returnTd = if (team != null) formatReturnTouchdown(event, team) else null
+        val returnTd = if (team != null) formatReturnTouchdown(event, team, nameExpander) else null
         if (returnTd != null) {
-          "Touchdown, $returnTd.$afterScore"
+          val (_, parenLower) = stripTrailingParenthetical(event.play?.text?.trim().orEmpty())
+          val tryNote = if (event.tryPending) "" else formatTryNote(parenLower)
+          "Touchdown, $returnTd.$tryNote$afterScore"
         } else {
           val detail = formatTouchdownDetail(event, team, nameExpander)
           if (detail.isEmpty()) "Touchdown, $teamName!$afterScore"
@@ -104,7 +120,11 @@ object PlaySpeechFormatter {
         if (detail.isEmpty()) "Field goal, $teamName.$scoreSuffix"
         else "Field goal, $teamName. $detail$scoreSuffix"
       }
-      GameEventKind.SAFETY -> "Safety! Two points for $teamName.$scoreSuffix"
+      GameEventKind.SAFETY -> {
+        val detail = formatGeneralScoringPlay(event)
+        if (detail.isEmpty()) "Safety! Two points for $teamName.$scoreSuffix"
+        else "Safety! Two points for $teamName. $detail$scoreSuffix"
+      }
       GameEventKind.OTHER_SCORE -> {
         val detail = formatGeneralScoringPlay(event)
         if (detail.isEmpty()) "Score for $teamName.$scoreSuffix"
@@ -275,22 +295,44 @@ object PlaySpeechFormatter {
     }
   }
 
-  private fun formatReturnTouchdown(event: GameEvent, scoringTeam: NflSide): String? {
+  private fun formatReturnTouchdown(
+    event: GameEvent,
+    scoringTeam: NflSide,
+    nameExpander: PlayerNameExpander?
+  ): String? {
     val play = event.play ?: return null
     val (cleanText, _) = stripTrailingParenthetical(play.text.trim())
+    val isDefensiveScore = play.offenseTeamId != null && play.offenseTeamId != scoringTeam.espnId
+
+    for ((espnPhrase, returnKind) in endZoneReturnPhrases) {
+      if (!cleanText.endsWith(espnPhrase, ignoreCase = true)) continue
+      val prefix = cleanText.dropLast(espnPhrase.length).trim()
+      val scorerTokens = prefix.split(Regex("\\s+")).filter { it.isNotEmpty() }.dropLastWhile { it in clauseEnds }
+      val rawScorer = scorerTokens.joinToString(" ")
+      val scorer = expandSingleAbbrevToken(rawScorer, scoringTeam, nameExpander)
+      val teamLabel = if (returnKind is ReturnKind.Defense && isDefensiveScore) {
+        "${scoringTeam.fullName} Defense"
+      } else {
+        scoringTeam.fullName
+      }
+      val distance = "${returnKind.spoken} in the end zone"
+      return if (scorer.isEmpty()) "$teamLabel, $distance" else "$teamLabel, $scorer, $distance"
+    }
+
     for ((espnPhrase, returnKind) in returnPhrases) {
       val needle = " Yd $espnPhrase"
-      val idx = cleanText.lastIndexOf(needle)
+      val idx = cleanText.lastIndexOf(needle, ignoreCase = true)
       if (idx == -1) continue
       val wordsBefore = cleanText.substring(0, idx).trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
       val yards = wordsBefore.lastOrNull()?.toIntOrNull() ?: continue
       val scorerWords = wordsBefore.dropLast(1).takeLastWhile { it !in clauseEnds }
-      val scorer = scorerWords.joinToString(" ")
+      val rawScorer = scorerWords.joinToString(" ")
+      val scorer = expandSingleAbbrevToken(rawScorer, scoringTeam, nameExpander)
 
       var teamLabel = scoringTeam.fullName
       val spokenPhrase = when (returnKind) {
         is ReturnKind.Defense -> {
-          if (play.offenseTeamId != null && play.offenseTeamId != scoringTeam.espnId) {
+          if (isDefensiveScore) {
             teamLabel += " Defense"
           }
           returnKind.spoken
@@ -300,7 +342,36 @@ object PlaySpeechFormatter {
       val distance = if (yards == 0) "$spokenPhrase in the end zone" else "$yards yard $spokenPhrase"
       return if (scorer.isEmpty()) "$teamLabel, $distance" else "$teamLabel, $scorer, $distance"
     }
+
+    if (isDefensiveScore) {
+      val callText = finalReviewedCall(play)
+      if (callText.contains("FUMBLES", ignoreCase = true)) {
+        val afterFumble = callText.substringAfter("FUMBLES", missingDelimiterValue = callText)
+        val recoverer = recoveredByRegex.find(afterFumble)?.groupValues?.get(1)
+          ?.let { expandIfAbbrev(it, scoringTeam, nameExpander) }
+        val inEndZone = endZoneSpotRegex.containsMatchIn(callText)
+        val phrase = if (inEndZone) "fumble recovery in the end zone" else "fumble recovery"
+        val teamLabel = "${scoringTeam.fullName} Defense"
+        return if (recoverer != null) "$teamLabel, $recoverer, $phrase" else "$teamLabel, $phrase"
+      }
+      if (callText.contains("INTERCEPTED", ignoreCase = true)) {
+        val interceptor = interceptionRegex.find(callText)?.groupValues?.get(2)
+          ?.let { expandIfAbbrev(it, scoringTeam, nameExpander) }
+        val teamLabel = "${scoringTeam.fullName} Defense"
+        return if (interceptor != null) "$teamLabel, $interceptor, interception" else "$teamLabel, interception"
+      }
+    }
+
     return null
+  }
+
+  private fun expandSingleAbbrevToken(
+    scorer: String,
+    scoringTeam: NflSide,
+    nameExpander: PlayerNameExpander?
+  ): String {
+    if (scorer.isEmpty() || scorer.contains(' ') || !scorer.contains('.')) return scorer
+    return expandIfAbbrev(scorer, scoringTeam, nameExpander)
   }
 
   fun scoreSentence(event: GameEvent): String {

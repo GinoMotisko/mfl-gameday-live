@@ -107,6 +107,17 @@ data class FantasyPlayer(
       return "${parts[1].first()}.${parts[0]}"
     }
 
+  val abbreviatedEspnNameWithoutSuffix: String?
+    get() {
+      val parts = rawMflName.split(",", limit = 2).map { it.trim() }
+      if (parts.size != 2 || parts[1].isEmpty()) return null
+      val lastNoSuffix = parts[0]
+        .replace(Regex("""\s+(?:Jr\.?|Sr\.?|II|III|IV|V)$""", RegexOption.IGNORE_CASE), "")
+        .trim()
+      if (lastNoSuffix == parts[0] || lastNoSuffix.isEmpty()) return null
+      return "${parts[1].first()}.$lastNoSuffix"
+    }
+
   /**
    * Resolves either the player's official NFL headshot (via MFL's `espn_id` cross-reference)
    * or the NFL team logo for Team Defenses / Special Teams.

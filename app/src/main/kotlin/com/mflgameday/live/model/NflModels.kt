@@ -443,13 +443,36 @@ enum class PlayKind {
     get() = this == TOUCHDOWN || this == FIELD_GOAL || this == SAFETY || this == OTHER_SCORE
 
   companion object {
-    fun fromEspn(espnType: String, isScoring: Boolean, playText: String = "", yardsStat: Int = 0): PlayKind {
+    fun fromEspn(
+      espnType: String,
+      isScoring: Boolean,
+      playText: String = "",
+      yardsStat: Int = 0,
+      scoringTypeHint: String? = null
+    ): PlayKind {
       val t = espnType.lowercase().trim()
       val txt = playText.lowercase()
+      val effectiveTxt = txt.substringAfterLast("reversed.").trim()
+      val hint = scoringTypeHint?.lowercase()?.trim().orEmpty()
+      val isTwoPoint = hint.contains("two-point") || hint.contains("2pt") ||
+        t.contains("two-point") || t.contains("2-point") ||
+        effectiveTxt.contains("two-point") || effectiveTxt.contains("2-point")
+      val isTouchdownByHintOrText = isScoring && !isTwoPoint && (
+        hint == "touchdown" || hint == "td" ||
+          (effectiveTxt.contains("touchdown") && !effectiveTxt.contains("nullified"))
+        )
+      val isFieldGoalByHintOrText = isScoring && (
+        hint == "field-goal" || hint == "fg" ||
+          effectiveTxt.contains("field goal is good")
+        )
+      val isSafetyByHintOrText = isScoring && (
+        hint == "safety" || hint == "sf" ||
+          effectiveTxt.contains(", safety") || effectiveTxt.endsWith("safety.")
+        )
       return when {
-        t.contains("touchdown") -> TOUCHDOWN
-        t.contains("field goal good") -> FIELD_GOAL
-        t.contains("safety") -> SAFETY
+        (t.contains("touchdown") && (isScoring || !effectiveTxt.contains("nullified"))) || isTouchdownByHintOrText -> TOUCHDOWN
+        t.contains("field goal good") || isFieldGoalByHintOrText -> FIELD_GOAL
+        t.contains("safety") || isSafetyByHintOrText -> SAFETY
         isScoring -> OTHER_SCORE
         t == "sack" -> SACK
         t.contains("interception") -> INTERCEPTION
@@ -549,5 +572,6 @@ data class GameEvent(
   val homeScore: Int,
   val observedAtMillis: Long,
   val tryPending: Boolean = false,
-  val customHeadline: String? = null
+  val customHeadline: String? = null,
+  val isSilentBackfill: Boolean = false
 )
