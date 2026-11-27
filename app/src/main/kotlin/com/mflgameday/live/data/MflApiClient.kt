@@ -103,6 +103,11 @@ data class ConditionalScheduleResult(
   val games: List<NflGameState>
 )
 
+data class ScoringBreakdownFetchResult(
+  val breakdowns: Map<String, List<ScoringBreakdownLine>>,
+  val hasIncompleteBenchHydration: Boolean = false
+)
+
 /**
  * Thread-safe, rate-limited MyFantasyLeague API client.
  * Serializes calls ~1.1s apart per MFL developer guidelines and honors HTTP 429 with a 60s cooldown.
@@ -435,8 +440,26 @@ class MflApiClient(
     playersDb: Map<String, FantasyPlayer> = emptyMap(),
     apiKey: String? = null,
     mflUserIdCookie: String? = null
-  ): Map<String, List<ScoringBreakdownLine>> {
-    val base = upgradeHttpToHttpsIfMfl(config.baseUrl.trimEnd('/')).toHttpUrlOrNull() ?: return emptyMap()
+  ): Map<String, List<ScoringBreakdownLine>> =
+    fetchScoringBreakdownsWithStatus(
+      config = config,
+      week = week,
+      rawMatchups = rawMatchups,
+      playersDb = playersDb,
+      apiKey = apiKey,
+      mflUserIdCookie = mflUserIdCookie
+    ).breakdowns
+
+  suspend fun fetchScoringBreakdownsWithStatus(
+    config: LeagueConfig,
+    week: Int,
+    rawMatchups: List<RawMflMatchup> = emptyList(),
+    playersDb: Map<String, FantasyPlayer> = emptyMap(),
+    apiKey: String? = null,
+    mflUserIdCookie: String? = null
+  ): ScoringBreakdownFetchResult {
+    val base = upgradeHttpToHttpsIfMfl(config.baseUrl.trimEnd('/')).toHttpUrlOrNull()
+      ?: return ScoringBreakdownFetchResult(emptyMap())
     val urlBuilder = base.newBuilder()
       .addPathSegment(config.year.toString())
       .addPathSegment("live_scoring_summary")
@@ -464,9 +487,12 @@ class MflApiClient(
       }
       .distinctBy { it.playerId }
 
-    if (missingPlayers.isEmpty()) return summaryBreakdowns
+    if (missingPlayers.isEmpty()) {
+      return ScoringBreakdownFetchResult(summaryBreakdowns, hasIncompleteBenchHydration = false)
+    }
 
     val combined = LinkedHashMap(summaryBreakdowns)
+    var hydrationIncomplete = false
     try {
       val ajaxLsUrl = base.newBuilder()
         .addPathSegment(config.year.toString())
@@ -501,7 +527,10 @@ class MflApiClient(
         }
       }
 
-      val activeRules = rules ?: return summaryBreakdowns
+      val activeRules = rules
+      if (activeRules == null) {
+        return ScoringBreakdownFetchResult(summaryBreakdowns, hasIncompleteBenchHydration = true)
+      }
       val statsBaseRaw = upgradeHttpToHttpsIfMfl(
         activeRules.xmlBaseUrl ?: "${config.baseUrl.trimEnd('/')}/fflnetdynamic${config.year}/"
       ).trimEnd('/')
@@ -533,7 +562,7 @@ class MflApiClient(
           liveWeekStatsCache[statsKey] = statsNow to parsedStats
           parsedStats
         } else {
-          return summaryBreakdowns
+          return ScoringBreakdownFetchResult(summaryBreakdowns, hasIncompleteBenchHydration = true)
         }
       }
 
@@ -552,9 +581,13 @@ class MflApiClient(
     } catch (ce: CancellationException) {
       throw ce
     } catch (_: Exception) {
-      // Best-effort fallback: preserve partial `live_scoring_summary` breakdowns cleanly.
+      // Best-effort fallback: preserve partial `live_scoring_summary` breakdowns while marking retry needed.
+      hydrationIncomplete = true
     }
-    return combined
+    return ScoringBreakdownFetchResult(
+      breakdowns = combined,
+      hasIncompleteBenchHydration = hydrationIncomplete
+    )
   }
 
   /**

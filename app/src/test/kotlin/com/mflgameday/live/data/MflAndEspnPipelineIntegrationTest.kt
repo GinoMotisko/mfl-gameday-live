@@ -817,4 +817,56 @@ class MflAndEspnPipelineIntegrationTest {
       server.shutdown()
     }
   }
+
+  @Test
+  fun mflFetchScoringBreakdownsWithStatus_marksIncompleteBenchHydrationOnTransientAjaxFailure() = runTest {
+    val server = MockWebServer()
+    server.start()
+    try {
+      val baseUrl = server.url("/").toString().trimEnd('/')
+      val client = MflApiClient(apiBaseUrl = baseUrl, minRequestSpacingMs = 1L)
+      val config = LeagueConfig(
+        leagueId = "10479",
+        leagueName = "Wyoming Valley Conference",
+        year = 2026,
+        franchiseId = "0008",
+        franchiseName = "Cleaveland Steamers",
+        baseUrl = baseUrl
+      )
+      val rawMatchups = listOf(
+        RawMflMatchup(
+          franchises = listOf(
+            RawMflFranchiseLive(
+              franchiseId = "0010",
+              score = 20.20,
+              isHome = true,
+              playersCurrentlyPlaying = 1,
+              playersYetToPlay = 0,
+              gameSecondsRemaining = 895,
+              players = listOf(
+                RawMflPlayerScore("0504", score = 11.00, isStarter = true, gameSecondsRemaining = 0),
+                RawMflPlayerScore("13595", score = 9.20, isStarter = false, gameSecondsRemaining = 895)
+              )
+            )
+          )
+        )
+      )
+
+      // Summary succeeds with starter 0504, while ajax_ls returns HTTP 500 on both retry attempts
+      server.enqueue(
+        MockResponse().setBody(
+          """<td class="points" id="points_0504"><a title='&bull;4.00 pts for 10 Total Points Allowed'>4.00</a></td>"""
+        )
+      )
+      server.enqueue(MockResponse().setResponseCode(500).setBody("upstream error"))
+      server.enqueue(MockResponse().setResponseCode(500).setBody("upstream error"))
+
+      val res = client.fetchScoringBreakdownsWithStatus(config, week = 12, rawMatchups = rawMatchups)
+      assertTrue("Must flag incomplete hydration so coordinator retries next poll", res.hasIncompleteBenchHydration)
+      assertEquals(1, res.breakdowns["0504"].orEmpty().size)
+      assertTrue(res.breakdowns["13595"].isNullOrEmpty())
+    } finally {
+      server.shutdown()
+    }
+  }
 }
