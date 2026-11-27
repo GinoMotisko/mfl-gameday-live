@@ -485,6 +485,32 @@ class VoiceAndFieldVisualPolicyTest {
     assertEquals("-0.125", audit3.items[3].signedPointsLabel)
 
     assertFalse("Third Down Conversions must not highlight as 2-Pt conversion", audit3.items[4].isTouchdownOrTwoPt)
+
+    // 4. Defensive two-point conversion return (+2 to defense after TD) must keep the TD-scoring team as next kicker!
+    val defTwoPtRefined = LiveFieldSituationResolver.refineWithPlayHistory(
+      game = awaitingKickoff.copy(
+        away = tb.copy(score = 20),
+        home = det.copy(score = 19),
+        possessionEspnId = "8",
+        fieldSituation = LiveFieldSituation.SCRIMMAGE_DRIVE
+      ),
+      plays = listOf(
+        NflPlay("td1", 1, PlayKind.TOUCHDOWN, "Chris Godwin 6 Yd pass from Baker Mayfield", awayScore = 20, homeScore = 17, offenseTeamId = "27"),
+        NflPlay(
+          id = "try1",
+          sequence = 2,
+          kind = PlayKind.OTHER_SCORE,
+          text = "Defensive Two-Point Conversion: Brian Branch returns intercepted pass for 2 pts",
+          rawPlayText = "TWO-POINT CONVERSION ATTEMPT. B.Mayfield pass intercepted by B.Branch, DEFENSIVE TWO-POINT ATTEMPT SUCCEEDS.",
+          awayScore = 20,
+          homeScore = 19,
+          isTurnover = true,
+          offenseTeamId = "27"
+        )
+      )
+    )
+    assertEquals(LiveFieldSituation.KICKOFF_PENDING, defTwoPtRefined.fieldSituation)
+    assertEquals("TD-scoring team (TBB 27) must remain kicking team after defensive 2-pt return", "27", defTwoPtRefined.possessionEspnId)
   }
 
   private fun classifyOrDefault(

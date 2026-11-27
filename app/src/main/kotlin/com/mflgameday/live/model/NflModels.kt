@@ -381,16 +381,32 @@ object LiveFieldSituationResolver {
 
   private fun inferKickingTeamEspnId(game: NflGameState, scoringPlay: NflPlay, plays: List<NflPlay>): String? {
     val idx = plays.indexOfFirst { it.id == scoringPlay.id }
+    val rawLower = scoringPlay.rawPlayText.ifBlank { scoringPlay.text }.lowercase()
+    val isTryAttempt =
+      scoringPlay.kind != PlayKind.TOUCHDOWN &&
+        (rawLower.contains("extra point") || rawLower.contains("two-point") || rawLower.contains("2-point"))
+    if (isTryAttempt) {
+      val precedingTd = if (idx > 0) plays.subList(0, idx).lastOrNull { it.kind == PlayKind.TOUCHDOWN } else null
+      if (precedingTd != null) {
+        return inferKickingTeamEspnId(game, precedingTd, plays)
+      }
+      if (scoringPlay.offenseTeamId != null) {
+        return scoringPlay.offenseTeamId
+      }
+    }
+
+    val isDefensiveTryReturn = rawLower.contains("defensive two-point") || rawLower.contains("defensive 2-point")
+    val invertScoreDeltaWinner = scoringPlay.kind == PlayKind.SAFETY || isDefensiveTryReturn
     val prevAwayScore = if (idx > 0) plays[idx - 1].awayScore else 0
     val prevHomeScore = if (idx > 0) plays[idx - 1].homeScore else 0
     if (idx >= 0) {
       val awayDelta = scoringPlay.awayScore - prevAwayScore
       val homeDelta = scoringPlay.homeScore - prevHomeScore
       if (awayDelta > 0 && homeDelta <= 0) {
-        return if (scoringPlay.kind == PlayKind.SAFETY) game.home.espnId else game.away.espnId
+        return if (invertScoreDeltaWinner) game.home.espnId else game.away.espnId
       }
       if (homeDelta > 0 && awayDelta <= 0) {
-        return if (scoringPlay.kind == PlayKind.SAFETY) game.away.espnId else game.home.espnId
+        return if (invertScoreDeltaWinner) game.away.espnId else game.home.espnId
       }
       if (awayDelta >= 6 || homeDelta >= 6) {
         return if (awayDelta >= homeDelta) game.away.espnId else game.home.espnId
@@ -398,7 +414,7 @@ object LiveFieldSituationResolver {
     }
     val offenseId = scoringPlay.offenseTeamId
     if (offenseId != null) {
-      val invertOffense = scoringPlay.isTurnover || scoringPlay.kind == PlayKind.SAFETY
+      val invertOffense = (scoringPlay.isTurnover && !isTryAttempt) || scoringPlay.kind == PlayKind.SAFETY
       return if (!invertOffense) {
         offenseId
       } else {
