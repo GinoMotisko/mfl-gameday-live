@@ -42,6 +42,7 @@ class MainActivity : ComponentActivity() {
   override fun onResume() {
     super.onResume()
     val app = application as MflGameDayApp
+    app.coordinator.onAppWindowFocused()
     val state = app.coordinator.uiState.value
     if (state.settings.operatingMode != OperatingMode.UNCONFIGURED) {
       app.updateController.onActivityResumed(
@@ -50,6 +51,13 @@ class MainActivity : ComponentActivity() {
           app.coordinator.uiState.value.isSpeakingNow || app.coordinator.voiceEngine.hasActiveOrPendingSpeech()
         }
       )
+    }
+  }
+
+  override fun onWindowFocusChanged(hasFocus: Boolean) {
+    super.onWindowFocusChanged(hasFocus)
+    if (hasFocus) {
+      (application as? MflGameDayApp)?.coordinator?.onAppWindowFocused()
     }
   }
 

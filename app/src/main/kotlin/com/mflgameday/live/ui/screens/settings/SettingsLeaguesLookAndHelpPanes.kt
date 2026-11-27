@@ -526,7 +526,7 @@ fun LookAndCouchModePane(
       }
     }
 
-    if (!BuildConfig.IS_PLAY_STORE_BUILD && !isIgnoringBatteryOpt) {
+    if (!isIgnoringBatteryOpt) {
       Surface(
         color = ext.cardElevated,
         shape = RoundedCornerShape(14.dp),
@@ -542,19 +542,32 @@ fun LookAndCouchModePane(
           Icon(Icons.Default.BatteryChargingFull, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
           Column(modifier = Modifier.weight(1f)) {
             Text("Prevent Game-Day Sleep", fontWeight = FontWeight.Bold)
-            Text("Stops Android from pausing live calls during 10-hour Sunday slates.", style = MaterialTheme.typography.labelSmall, color = ext.subtleText)
+            Text(
+              text = if (BuildConfig.IS_PLAY_STORE_BUILD) {
+                "For 10-hour screen-off Sunday slates on Pixel/Samsung, set App Battery Usage to 'Unrestricted'."
+              } else {
+                "Stops Android from pausing live calls during 10-hour Sunday slates."
+              },
+              style = MaterialTheme.typography.labelSmall,
+              color = ext.subtleText
+            )
           }
           OutlinedButton(
             onClick = {
               runCatching {
-                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                val action = if (BuildConfig.IS_PLAY_STORE_BUILD) {
+                  Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+                } else {
+                  Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+                }
+                val intent = Intent(action).apply {
                   data = Uri.parse("package:${context.packageName}")
                 }
                 context.startActivity(intent)
               }
             }
           ) {
-            Text("Allow")
+            Text(if (BuildConfig.IS_PLAY_STORE_BUILD) "Open" else "Allow")
           }
         }
       }

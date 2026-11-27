@@ -7,12 +7,14 @@ import com.mflgameday.live.model.GameEventKind
 import kotlin.math.PI
 import kotlin.math.sin
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
  * Pure Kotlin 16-bit PCM stadium audio stinger synthesizer.
  * Plays short, punchy broadcast chimes before spoken play-by-play announcements
- * with smooth attack/decay envelopes and zero external audio asset licensing issues.
+ * with smooth attack/decay envelopes, non-blocking coroutine suspension, and guaranteed
+ * native `AudioTrack` cleanup on cancellation.
  */
 object StadiumSoundSynthesizer {
   private const val SAMPLE_RATE = 24_000
@@ -54,8 +56,9 @@ object StadiumSoundSynthesizer {
     playNotes(sequence)
   }
 
-  private fun playNotes(notes: List<Note>) {
-    runCatching {
+  private suspend fun playNotes(notes: List<Note>) {
+    var audioTrack: AudioTrack? = null
+    try {
       val totalSamples = notes.sumOf { (SAMPLE_RATE * it.durationMs) / 1000 }
       if (totalSamples <= 0) return
       val pcm = ShortArray(totalSamples)
@@ -72,7 +75,6 @@ object StadiumSoundSynthesizer {
             else -> 1.0
           }
           val t = i.toDouble() / SAMPLE_RATE
-          // Fundamental + subtle octave harmonic for warm broadcast brass/chime timbre
           val wave = 0.78 * sin(2.0 * PI * note.freqHz * t) +
             0.22 * sin(2.0 * PI * (note.freqHz * 2.0) * t)
           val sample = (wave * note.gain * env * Short.MAX_VALUE).toInt()
@@ -84,7 +86,7 @@ object StadiumSoundSynthesizer {
         offset += count
       }
 
-      val audioTrack = AudioTrack.Builder()
+      val track = AudioTrack.Builder()
         .setAudioAttributes(
           AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -101,13 +103,21 @@ object StadiumSoundSynthesizer {
         .setBufferSizeInBytes(pcm.size * 2)
         .setTransferMode(AudioTrack.MODE_STATIC)
         .build()
+      audioTrack = track
 
-      audioTrack.write(pcm, 0, pcm.size)
-      audioTrack.play()
+      track.write(pcm, 0, pcm.size)
+      track.play()
       val totalDurationMs = notes.sumOf { it.durationMs }.toLong()
-      Thread.sleep(totalDurationMs + 45L)
-      audioTrack.stop()
-      audioTrack.release()
+      delay(totalDurationMs + 45L)
+    } catch (ce: kotlinx.coroutines.CancellationException) {
+      throw ce
+    } catch (_: Throwable) {
+      // Audio device unavailable or transient mixer error — proceed to spoken TTS immediately
+    } finally {
+      audioTrack?.let { t ->
+        runCatching { t.stop() }
+        runCatching { t.release() }
+      }
     }
   }
 }

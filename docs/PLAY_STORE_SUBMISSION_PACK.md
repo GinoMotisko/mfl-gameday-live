@@ -1,4 +1,4 @@
-# Google Play Console Submission Pack — GameDay Live (`v1.3.2` / `versionCode = 12`)
+# Google Play Console Submission Pack — GameDay Live (`v1.3.3` / `versionCode = 13`)
 
 Prepared for **Motisko Ventures LLC** (Google Play Developer Account ID `7669036577809025288`, D-U-N-S `14-685-6313`).
 Every field below is audited against Google Play's 2026 Impersonation/IP, Metadata, Data Safety, and Android 14–16 (`targetSdk = 36`) Foreground Service policies.
@@ -9,11 +9,11 @@ Every field below is audited against Google Play's 2026 Impersonation/IP, Metada
 
 All uploadable artifacts are staged in both `dist/play-store-kit/` and `OneDrive/Motisko Ventures LLC/Google-Play-Console-Kit/2-App-Bundle-And-Store-Graphics/`:
 
-1. **Signed Android App Bundle (`.aab`)**: `GameDay-Live-PlayStore-v1.3.2.aab`
+1. **Signed Android App Bundle (`.aab`)**: `GameDay-Live-PlayStore-v1.3.3.aab`
    - `applicationId`: `com.motiskoventures.gameday`
-   - `versionName`: `1.3.2` (`versionCode = 12`)
+   - `versionName`: `1.3.3` (`versionCode = 13`)
    - Signing Key SHA-256: `4ffddda61399a4b04cf9a530ad68727f702d6dbbf6754107500265a7e2e350eb`
-2. **R8 Deobfuscation Mapping File**: `mapping-playStoreRelease-v1.3.2.txt`
+2. **R8 Deobfuscation Mapping File**: `mapping-playStoreRelease-v1.3.3.txt`
    - Upload alongside the `.aab` under *App bundle explorer -> Downloads / Reobfuscation file* so Android Vitals stack traces show exact Kotlin line numbers.
 3. **Hi-Res App Icon (`512 × 512` PNG)**: `icon-512x512.png`
 4. **Feature Graphic (`1024 × 500`, 24-bit RGB PNG, no alpha)**: `feature-graphic-1024x500.png`
@@ -21,6 +21,8 @@ All uploadable artifacts are staged in both `dist/play-store-kit/` and `OneDrive
 6. **Foldable Screenshots (`4` `24-bit RGB` PNGs: `1:1` `2048 × 2048`, `4:3` `2048 × 1536`, `10:16` `1200 × 1920`)**: `screenshots-foldable/01-*.png` .. `04-*.png`
 7. **7-Inch Tablet Screenshots (`4 × 1920 × 1080`, `16:9` 24-bit RGB PNG)**: `screenshots-tablet-7in/01-*.png` .. `04-*.png`
 8. **10-Inch Tablet Screenshots (`4 × 2560 × 1440`, `16:9` 24-bit RGB PNG)**: `screenshots-tablet-10in/01-*.png` .. `04-*.png`
+9. **Desktop / DeX / Chromebook Screenshots (`2 × 2560 × 1440`, `16:9` 24-bit RGB PNG)**: `screenshots-desktop/01-*.png` .. `02-*.png`
+10. **Data Safety API CSV (`androidpublisher v3`)**: `data-safety-v1.3.2.csv`
 
 ---
 
@@ -118,12 +120,14 @@ All uploadable artifacts are staged in both `dist/play-store-kit/` and `OneDrive
 
 ---
 
-## 4. Fastest Launch Track Strategy (Share With Friends Today + Public Production)
+## 4. Automated Release & Track Rollout (`scripts/play-publish.mjs`)
 
-Because **Motisko Ventures LLC** is a verified **Organization** account, you have **zero 14-day / 12-tester hold**:
+Because **Motisko Ventures LLC** is a verified **Organization** account (`7669036577809025288`), releases ship directly through Google's `androidpublisher v3` API with **zero 14-day / 12-tester hold**:
 
-1. **Track 1 — `Testing -> Internal testing` (Instant Link in ~60 Seconds!)**:
-   - Upload `GameDay-Live-PlayStore-v1.3.1.aab` + `mapping-playStoreRelease-v1.3.1.txt` to **Internal testing** first.
-   - Add your friends' Gmail addresses to an `Early Friends` email list and copy the **Join on Web / Android link** — up to 100 invited friends can install directly from Google Play *immediately* without waiting for Google's 2–5 day initial review!
-2. **Track 2 — `Promote release -> Production` (Public Worldwide / US Launch)**:
-   - Once the 35-second audible Foreground Service video URL is pasted in `App content`, click **Promote release -> Production** on that exact same `v1.3.1 (11)` bundle -> Select countries -> **Start rollout to Production**.
+1. **Automated Production Rollout (Current Live Build: `v1.3.3` / `versionCode = 13`)**:
+   - Validate and publish the signed bundle + embedded R8 `proguard.map` from Section 1 (`GameDay-Live-PlayStore-v1.3.3.aab` + `mapping-playStoreRelease-v1.3.3.txt`, or the current release's matching Section 1 artifacts):
+     `node scripts/play-publish.mjs upload-release --track=production --aab=app/build/outputs/bundle/playStoreRelease/app-playStore-release.aab --update-priority=2 --notes="..."`
+   - Verify active track status and live endpoints:
+     `node scripts/play-publish.mjs smoke --version=v1.3.3 --version-code=13`
+2. **Optional Internal Track Staging (`Testing -> Internal testing`)**:
+   - To stage a preview build for invited testers prior to production promotion, run `node scripts/play-publish.mjs upload-internal --aab=<path>` and `node scripts/play-publish.mjs promote --from=internal --to=production`.

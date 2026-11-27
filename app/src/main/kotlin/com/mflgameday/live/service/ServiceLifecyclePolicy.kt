@@ -67,6 +67,51 @@ object ServiceLifecyclePolicy {
   }
 
   /**
+   * Handles window-focus overlays (e.g., sliding the Pixel notification shade down and back up,
+   * which never triggers `Activity.onStop()`/`onStart()`): auto-resumes if the broadcast was paused
+   * by anything other than an explicit in-app Pause tap.
+   */
+  fun shouldAutoResumeOnWindowFocus(
+    settings: GameDaySettings,
+    isBroadcastPaused: Boolean,
+    pausedExplicitlyByUser: Boolean,
+    isPollLoopActive: Boolean
+  ): Boolean {
+    if (settings.operatingMode == OperatingMode.UNCONFIGURED) return false
+    if (pausedExplicitlyByUser) return false
+    if (isBroadcastPaused) return true
+    if (settings.operatingMode != OperatingMode.DEMO_SIMULATOR && !isPollLoopActive) return true
+    return false
+  }
+
+  /**
+   * Computes the local epoch millis (`earliestKickoff - 90m`) for scheduling an on-device
+   * `AlarmManager` wakeup when `enterOffWindowStandby()` puts background polling to sleep
+   * on Sunday morning before the 90-minute pregame window opens.
+   */
+  fun computeNextPregameWakeEpochMillis(
+    settings: GameDaySettings,
+    isBroadcastPaused: Boolean,
+    nflGames: List<NflGameState>,
+    nowMillis: Long
+  ): Long? {
+    if (settings.operatingMode != OperatingMode.MFL_AND_NFL_LIVE &&
+      settings.operatingMode != OperatingMode.NFL_LIVE_ONLY
+    ) {
+      return null
+    }
+    if (!settings.runInBackgroundService || isBroadcastPaused) return null
+    val nextFutureKickoff = nflGames
+      .filter { it.phase == GamePhase.SCHEDULED }
+      .mapNotNull { it.kickoffEpochMillis }
+      .filter { (it - nowMillis) > PRE_KICKOFF_STANDBY_WINDOW_MS }
+      .minOrNull()
+      ?: return null
+    val targetWake = nextFutureKickoff - PRE_KICKOFF_STANDBY_WINDOW_MS
+    return targetWake.takeIf { it > nowMillis + 30_000L }
+  }
+
+  /**
    * True ONLY when live broadcast persistence is warranted:
    * - Demo Simulator session is active, OR
    * - At least one NFL game is currently `LIVE` or `HALFTIME`, OR

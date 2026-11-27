@@ -38,21 +38,21 @@ MFL-GameDay-Android-app/
 │       │   │   │   ├── PlayerNameExpander.kt         # Expands abbreviated ESPN names via MFL + IDP player database
 │       │   │   │   └── PlaySpeechFormatter.kt        # Natural broadcast play-by-play speech generator
 │       │   │   ├── model/
-│       │   │   │   ├── FantasyModels.kt              # LeagueConfig, FantasyMatchup, PlayerLiveScore, ExposureRole
-│       │   │   │   ├── NflModels.kt                  # NflTeam (32 teams + colors), NflGameState, NflPlay, GameEvent
+│       │   │   │   ├── FantasyModels.kt              # LeagueConfig, FantasyMatchup, PlayerLiveScore, ScoringBreakdownFormatter
+│       │   │   │   ├── NflModels.kt                  # NflTeam, NflGameState, LiveFieldSituationResolver (PAT/Kickoff), GameEvent
 │       │   │   │   └── SettingsModels.kt             # AppThemePreset (Auto Dark/Light + 5 themes), VoicePersona, GameDaySettings
 │       │   │   ├── service/
-│       │   │   │   ├── GameDayCoordinator.kt         # Application-scoped reactive polling, game-window auto-standby & state orchestrator
-│       │   │   │   ├── GameDayLiveService.kt         # Game-window Foreground Service, NotificationDismissReceiver & deduplicated shade controls
-│       │   │   │   └── ServiceLifecyclePolicy.kt     # Pure lifecycle policy (90m game-window gating, shade dedupe, Recents swipe-close & week rollover)
+│       │   │   │   ├── GameDayCoordinator.kt         # Application-scoped reactive polling, ~300ms ESPN voice dispatch & auto-standby
+│       │   │   │   ├── GameDayLiveService.kt         # MediaSession + WifiLock Foreground Service, PregameWakeReceiver & shade controls
+│       │   │   │   └── ServiceLifecyclePolicy.kt     # Pure lifecycle policy (90m game-window, pregame alarm, focus resume & rollover)
 │       │   │   └── ui/
 │       │   │       ├── GameDayAppShell.kt            # Responsive NavBar / NavRail / 3-Pane shell + Top Header Booth Pill
 │       │   │       ├── components/
-│       │   │       │   ├── BroadcastComponents.kt    # 3D clay avatars, 5-state rings, GooglePinnedLinearField & celebration banner
+│       │   │       │   ├── BroadcastComponents.kt    # 3D clay avatars, 5-state rings, GooglePinnedLinearField (+ Kickoff Tee/Arc)
 │       │   │       │   ├── ClayMascotResources.kt    # R8-safe 32 clay mascot & 6 clay base-layer drawable registry
 │       │   │       │   └── QuickTourDialog.kt        # 4-step interactive first-open wizard with live commentator audition
 │       │   │       ├── screens/
-│       │   │       │   ├── FantasyMatchupsScreen.kt  # Multi-league split scoreboard, Best Ball, 5-state rings & micro-drive strip
+│       │   │       │   ├── FantasyMatchupsScreen.kt  # Multi-league split scoreboard, opt-in Scoring Details ledger & micro-drive strip
 │       │   │       │   ├── NflGamesScreen.kt         # Adaptive 1/2/3-col NFL grid, GooglePinnedLinearField & Game Center modal
 │       │   │       │   ├── PlayFeedScreen.kt         # Filterable play-by-play log + one-tap speak & simulator
 │       │   │       │   ├── SettingsAndVoicesScreen.kt# Multi-device adaptive 5-category Settings Hub (Phone / Foldable / Tablet)

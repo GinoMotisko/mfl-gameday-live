@@ -2,6 +2,8 @@ package com.mflgameday.live.data
 
 import com.mflgameday.live.model.GamePhase
 import com.mflgameday.live.model.LeagueConfig
+import com.mflgameday.live.model.LiveFieldSituation
+import com.mflgameday.live.model.LiveFieldSituationResolver
 import com.mflgameday.live.model.PlayKind
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
@@ -330,6 +332,112 @@ class MflAndEspnPipelineIntegrationTest {
       assertEquals(10, activeMonday.completedWeek)
       assertEquals(11, activeMonday.liveScoringWeek)
       assertEquals("Must stay on Week 11 while Week 11 is not yet CompletedWeek", 11, activeMonday.effectiveActiveWeek)
+    } finally {
+      server.shutdown()
+    }
+  }
+
+  @Test
+  fun espnPostTouchdownOfficialTimeout_clearsStuckRedZoneAndSpotsKickoffTee() = runTest {
+    val server = MockWebServer()
+    // Simulates ESPN's exact mid-commercial-break payload after TD + XP + "Official Timeout"
+    // where ESPN still leaves isRedZone = true, down = -1, yardLine = 15!
+    server.enqueue(
+      MockResponse().setBody(
+        """
+        {
+          "week": { "number": 12 },
+          "events": [
+            {
+              "id": "401873999",
+              "date": "2026-11-26T17:30Z",
+              "status": {
+                "period": 2,
+                "displayClock": "4:12",
+                "type": { "name": "STATUS_IN_PROGRESS", "state": "in" }
+              },
+              "competitions": [
+                {
+                  "competitors": [
+                    {
+                      "id": "6",
+                      "homeAway": "away",
+                      "score": "14",
+                      "team": { "id": "6", "abbreviation": "DAL", "location": "Dallas", "name": "Cowboys" }
+                    },
+                    {
+                      "id": "8",
+                      "homeAway": "home",
+                      "score": "21",
+                      "team": { "id": "8", "abbreviation": "DET", "location": "Detroit", "name": "Lions" }
+                    }
+                  ],
+                  "situation": {
+                    "possession": "8",
+                    "isRedZone": true,
+                    "down": -1,
+                    "downDistanceText": "",
+                    "possessionText": "DAL 15",
+                    "yardLine": 15,
+                    "lastPlay": {
+                      "text": "Official Timeout",
+                      "type": { "text": "Official Timeout" }
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+        """.trimIndent()
+      )
+    )
+    server.enqueue(
+      MockResponse().setBody(
+        """
+        {
+          "header": { "id": "401873999" },
+          "scoringPlays": [
+            { "id": "p50", "text": "Jahmyr Gibbs 8 Yd Run (Jake Bates Kick)" }
+          ],
+          "drives": {
+            "current": {
+              "plays": [
+                {
+                  "id": "p50",
+                  "sequenceNumber": "500",
+                  "type": { "text": "Rushing Touchdown" },
+                  "text": "J.Gibbs right tackle for 8 yards, TOUCHDOWN.",
+                  "scoringPlay": true,
+                  "awayScore": 14,
+                  "homeScore": 21
+                },
+                {
+                  "id": "p51",
+                  "sequenceNumber": "510",
+                  "type": { "text": "Official Timeout" },
+                  "text": "Official Timeout at 04:12.",
+                  "scoringPlay": false,
+                  "awayScore": 14,
+                  "homeScore": 21
+                }
+              ]
+            }
+          }
+        }
+        """.trimIndent()
+      )
+    )
+    server.start()
+    try {
+      val espn = EspnApiClient(baseUrl = server.url("/").toString().trimEnd('/'))
+      val sb = espn.fetchScoreboard()
+      val summary = espn.fetchGameSummary("401873999")
+      val refined = LiveFieldSituationResolver.refineWithPlayHistory(sb.games.single(), summary.plays)
+      assertEquals(LiveFieldSituation.KICKOFF_PENDING, refined.fieldSituation)
+      assertFalse("Refined game must clear ESPN's stuck PAT Red Zone flag", refined.effectiveInRedZone)
+      assertEquals("8", refined.possessionEspnId)
+      assertEquals(0.35f, refined.fieldProgressFraction ?: 0f, 0.001f)
     } finally {
       server.shutdown()
     }

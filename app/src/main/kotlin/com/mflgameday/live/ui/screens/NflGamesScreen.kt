@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mflgameday.live.model.ExposureRole
 import com.mflgameday.live.model.GamePhase
+import com.mflgameday.live.model.LiveFieldSituation
 import com.mflgameday.live.model.NflGameState
 import com.mflgameday.live.model.NflSide
 import com.mflgameday.live.model.PlayLogEntry
@@ -67,6 +68,7 @@ import com.mflgameday.live.ui.components.AnimatedScoreText
 import com.mflgameday.live.ui.components.ExposurePill
 import com.mflgameday.live.ui.components.GooglePinnedLinearField
 import com.mflgameday.live.ui.components.RedZonePulseBadge
+import com.mflgameday.live.ui.components.SpecialTeamsStatusBadge
 import com.mflgameday.live.ui.components.TeamShieldBadge
 import com.mflgameday.live.ui.theme.LocalGameDayColors
 import java.time.Instant
@@ -97,7 +99,7 @@ fun NflGamesScreen(
       when (filter) {
         NflFilter.ALL -> true
         NflFilter.LIVE -> game.phase == GamePhase.LIVE || game.phase == GamePhase.HALFTIME
-        NflFilter.RED_ZONE -> game.phase == GamePhase.LIVE && game.inRedZone
+        NflFilter.RED_ZONE -> game.effectiveInRedZone
         NflFilter.MY_PLAYERS -> {
           val gameTeams = game.teams.toSet()
           uiState.crossLeagueExposures.values.any { it.player.team in gameTeams }
@@ -215,7 +217,8 @@ private fun NflBroadcastCard(
   val ext = LocalGameDayColors.current
   val hasMine = exposures.any { it.role == ExposureRole.MINE || it.role == ExposureRole.CONFLICT }
   val borderColor = when {
-    game.phase == GamePhase.LIVE && game.inRedZone -> ext.redZoneAlert
+    game.effectiveInRedZone -> ext.redZoneAlert
+    game.phase == GamePhase.LIVE && game.fieldSituation == LiveFieldSituation.PAT_PENDING -> ext.touchdownGold.copy(alpha = 0.85f)
     hasMine -> ext.mineBadge.copy(alpha = 0.7f)
     else -> ext.cardBorder
   }
@@ -225,7 +228,7 @@ private fun NflBroadcastCard(
     shape = RoundedCornerShape(16.dp),
     modifier = Modifier
       .fillMaxWidth()
-      .border(if (game.inRedZone && game.phase == GamePhase.LIVE) 2.dp else 1.dp, borderColor, RoundedCornerShape(16.dp))
+      .border(if (game.effectiveInRedZone) 2.dp else 1.dp, borderColor, RoundedCornerShape(16.dp))
       .clickable(onClick = onClick)
   ) {
     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -254,9 +257,18 @@ private fun NflBroadcastCard(
           }
         }
 
-        if (game.phase == GamePhase.LIVE && game.inRedZone) {
-          val rzTeam = game.possessionTeam?.code ?: ""
-          RedZonePulseBadge(teamCode = rzTeam)
+        when {
+          game.effectiveInRedZone -> {
+            val rzTeam = game.possessionTeam?.code ?: ""
+            RedZonePulseBadge(teamCode = rzTeam)
+          }
+          game.phase == GamePhase.LIVE && game.fieldSituation != LiveFieldSituation.SCRIMMAGE_DRIVE -> {
+            val kickingOrTryCode = game.possessionTeam?.code ?: ""
+            SpecialTeamsStatusBadge(
+              situation = game.fieldSituation,
+              teamCode = kickingOrTryCode
+            )
+          }
         }
       }
 
@@ -325,7 +337,12 @@ private fun NflBroadcastCard(
 @Composable
 private fun NflSideScoreRow(side: NflSide, game: NflGameState) {
   val ext = LocalGameDayColors.current
-  val hasBall = game.phase == GamePhase.LIVE && game.possessionEspnId == side.espnId
+  val hasBall = game.phase == GamePhase.LIVE &&
+    game.fieldSituation != LiveFieldSituation.KICKOFF_PENDING &&
+    game.possessionEspnId == side.espnId
+  val isKickingOff = game.phase == GamePhase.LIVE &&
+    game.fieldSituation == LiveFieldSituation.KICKOFF_PENDING &&
+    game.possessionEspnId == side.espnId
   val otherScore = if (side.espnId == game.away.espnId) game.home.score else game.away.score
   val winning = side.score > otherScore
 
@@ -338,7 +355,7 @@ private fun NflSideScoreRow(side: NflSide, game: NflGameState) {
       team = side.team,
       size = 48.dp,
       hasPossession = hasBall,
-      inRedZone = game.inRedZone,
+      inRedZone = game.effectiveInRedZone,
       logoUrlOverride = side.logoUrl
     )
 
@@ -355,8 +372,16 @@ private fun NflSideScoreRow(side: NflSide, game: NflGameState) {
           Icon(
             imageVector = Icons.Default.SportsFootball,
             contentDescription = "Possession",
-            tint = if (game.inRedZone) ext.redZoneAlert else ext.touchdownGold,
+            tint = if (game.effectiveInRedZone) ext.redZoneAlert else ext.touchdownGold,
             modifier = Modifier.size(14.dp)
+          )
+        } else if (isKickingOff) {
+          Text(
+            text = "KICKING",
+            fontSize = 9.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.ExtraBold,
+            color = ext.turfAccent
           )
         }
       }
