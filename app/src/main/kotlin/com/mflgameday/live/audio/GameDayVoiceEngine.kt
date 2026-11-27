@@ -371,7 +371,8 @@ class GameDayVoiceEngine(context: Context) {
       runCatching { engine.language = fallbackLocale }
     }
 
-    engine.setSpeechRate(plan.speechRate.coerceIn(0.6f, 1.8f))
+    val effectiveRate = plan.speechRate.coerceIn(0.6f, 1.8f)
+    engine.setSpeechRate(effectiveRate)
     engine.setPitch(plan.pitch.coerceIn(0.6f, 1.6f))
 
     val doneDeferred = CompletableDeferred<Unit>()
@@ -400,13 +401,26 @@ class GameDayVoiceEngine(context: Context) {
       return
     }
 
-    com.mflgameday.live.diagnostics.DiagnosticsLogger.info(
-      com.mflgameday.live.diagnostics.LogSubsystem.TTS_AUDIO,
-      "Spoke: ${item.text.take(120)}"
-    )
-    // Bound max wait to 25s so a silent Binder death in com.google.android.tts can never freeze Sunday calls
-    withTimeoutOrNull(25_000L) {
+    val estimatedDurationMs = ((item.text.length.coerceAtLeast(1) * 110L) / effectiveRate).toLong()
+    val watchdogTimeoutMs = (estimatedDurationMs + 20_000L).coerceIn(30_000L, 120_000L)
+    val completedCleanly = withTimeoutOrNull(watchdogTimeoutMs) {
       doneDeferred.await()
+      true
+    } ?: false
+
+    if (completedCleanly) {
+      com.mflgameday.live.diagnostics.DiagnosticsLogger.info(
+        com.mflgameday.live.diagnostics.LogSubsystem.TTS_AUDIO,
+        "Spoke: ${item.text.take(120)}"
+      )
+    } else {
+      activeUtteranceId = null
+      currentUtteranceDone = null
+      runCatching { engine.stop() }
+      com.mflgameday.live.diagnostics.DiagnosticsLogger.warn(
+        com.mflgameday.live.diagnostics.LogSubsystem.TTS_AUDIO,
+        "TTS utterance watchdog timed out after ${watchdogTimeoutMs}ms; stopped hung synthesis"
+      )
     }
   }
 }
