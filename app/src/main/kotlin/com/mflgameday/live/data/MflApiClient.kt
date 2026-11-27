@@ -11,7 +11,9 @@ import com.mflgameday.live.model.NflTeam
 import com.mflgameday.live.model.ScoringBreakdownLine
 import java.io.IOException
 import java.time.Year
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
@@ -114,8 +116,12 @@ class MflApiClient(
   private val throttleMutex = Mutex()
   private var lastRequestAtMs: Long = 0L
   private var backoffUntilMs: Long = 0L
+  private val ajaxRulesCache = ConcurrentHashMap<String, MflAjaxLeagueRules>()
+  private val liveWeekStatsCache = ConcurrentHashMap<String, Pair<Long, MflLiveWeekStats>>()
 
   companion object {
+    private const val LIVE_WEEK_STATS_CACHE_TTL_MS = 12_000L
+    private const val AJAX_RULES_MISSING_PLAYER_REFRESH_MS = 300_000L
     fun defaultOkHttpClient(): OkHttpClient = OkHttpClient.Builder()
       .connectTimeout(10, TimeUnit.SECONDS)
       .readTimeout(12, TimeUnit.SECONDS)
@@ -418,11 +424,15 @@ class MflApiClient(
   }
 
   /**
-   * Best-effort fetch of MFL's `live_scoring_summary` web page for granular scoring category breakdowns.
+   * Best-effort fetch of MFL's `live_scoring_summary` web page for granular scoring category
+   * breakdowns, with automatic hydration via `ajax_ls` + `live_stats_<week>.txt` for bench
+   * (`nonstarter`) or omitted players in standard head-to-head leagues.
    */
   suspend fun fetchScoringBreakdowns(
     config: LeagueConfig,
     week: Int,
+    rawMatchups: List<RawMflMatchup> = emptyList(),
+    playersDb: Map<String, FantasyPlayer> = emptyMap(),
     apiKey: String? = null,
     mflUserIdCookie: String? = null
   ): Map<String, List<ScoringBreakdownLine>> {
@@ -441,9 +451,110 @@ class MflApiClient(
     if (!mflUserIdCookie.isNullOrBlank()) {
       reqBuilder.header("Cookie", "MFL_USER_ID=$mflUserIdCookie")
     }
-    return throttledExecute(reqBuilder.build()) { _, html ->
+    val summaryBreakdowns = throttledExecute(reqBuilder.build()) { _, html ->
       ScoringBreakdownParser.parse(html)
     }
+
+    val missingPlayers = rawMatchups
+      .flatMap { it.franchises }
+      .flatMap { it.players }
+      .filter { p ->
+        (kotlin.math.abs(p.score) > 0.001 || p.gameSecondsRemaining < 3600) &&
+          summaryBreakdowns[p.playerId].isNullOrEmpty()
+      }
+      .distinctBy { it.playerId }
+
+    if (missingPlayers.isEmpty()) return summaryBreakdowns
+
+    val combined = LinkedHashMap(summaryBreakdowns)
+    try {
+      val ajaxLsUrl = base.newBuilder()
+        .addPathSegment(config.year.toString())
+        .addPathSegment("ajax_ls")
+        .addQueryParameter("L", config.leagueId)
+        .addQueryParameter("W", week.toString())
+        .apply {
+          if (!apiKey.isNullOrBlank()) addQueryParameter("APIKEY", apiKey)
+        }
+        .build()
+
+      val rulesKey = "${config.leagueId}_${config.year}_w$week"
+      val now = System.currentTimeMillis()
+      var rules = ajaxRulesCache[rulesKey]
+      val needsRulesRefresh = rules == null || (
+        missingPlayers.any { it.playerId !in rules.players && it.playerId !in playersDb } &&
+          now - rules.fetchedAtMs > AJAX_RULES_MISSING_PLAYER_REFRESH_MS
+        )
+      if (needsRulesRefresh) {
+        val ajaxReqBuilder = Request.Builder()
+          .url(ajaxLsUrl)
+          .header("User-Agent", userAgent)
+        if (!mflUserIdCookie.isNullOrBlank()) {
+          ajaxReqBuilder.header("Cookie", "MFL_USER_ID=$mflUserIdCookie")
+        }
+        val parsedRules = throttledExecute(ajaxReqBuilder.build()) { _, ajaxHtml ->
+          MflLiveStatsBreakdownCalculator.parseAjaxLeagueRules(ajaxHtml)
+        }
+        if (parsedRules.ruleBlocks.isNotEmpty()) {
+          rules = parsedRules
+          ajaxRulesCache[rulesKey] = parsedRules
+        }
+      }
+
+      val activeRules = rules ?: return summaryBreakdowns
+      val statsBaseRaw = upgradeHttpToHttpsIfMfl(
+        activeRules.xmlBaseUrl ?: "${config.baseUrl.trimEnd('/')}/fflnetdynamic${config.year}/"
+      ).trimEnd('/')
+      val weekPadded = week.coerceIn(1, MflStatusInfo.MAX_MFL_NFL_WEEK).toString().padStart(2, '0')
+      val statsFilename = if (activeRules.usesIdps) {
+        "live_stats_idp_$weekPadded.txt"
+      } else {
+        "live_stats_$weekPadded.txt"
+      }
+      val statsKey = "${statsBaseRaw}_$statsFilename"
+      val cachedStats = liveWeekStatsCache[statsKey]
+      val statsNow = System.currentTimeMillis()
+      val liveStats = if (cachedStats != null && statsNow - cachedStats.first <= LIVE_WEEK_STATS_CACHE_TTL_MS) {
+        cachedStats.second
+      } else {
+        val statsUrl = "$statsBaseRaw/$statsFilename".toHttpUrlOrNull()
+          ?.newBuilder()
+          ?.addQueryParameter("RANDOM", statsNow.toString())
+          ?.build()
+        if (statsUrl != null) {
+          val statsReq = Request.Builder()
+            .url(statsUrl)
+            .header("User-Agent", userAgent)
+            .header("Referer", ajaxLsUrl.toString())
+            .build()
+          val parsedStats = throttledExecute(statsReq) { _, statsTxt ->
+            MflLiveStatsBreakdownCalculator.parseLiveWeekStats(statsTxt)
+          }
+          liveWeekStatsCache[statsKey] = statsNow to parsedStats
+          parsedStats
+        } else {
+          return summaryBreakdowns
+        }
+      }
+
+      for (missing in missingPlayers) {
+        val computed = MflLiveStatsBreakdownCalculator.computeBreakdownsForPlayer(
+          playerId = missing.playerId,
+          rawScore = missing,
+          fallbackPlayer = playersDb[missing.playerId],
+          rules = activeRules,
+          liveStats = liveStats
+        )
+        if (computed.isNotEmpty()) {
+          combined[missing.playerId] = computed
+        }
+      }
+    } catch (ce: CancellationException) {
+      throw ce
+    } catch (_: Exception) {
+      // Best-effort fallback: preserve partial `live_scoring_summary` breakdowns cleanly.
+    }
+    return combined
   }
 
   /**

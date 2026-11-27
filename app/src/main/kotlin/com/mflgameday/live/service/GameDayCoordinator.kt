@@ -1507,6 +1507,8 @@ class GameDayCoordinator(
               mflClient.fetchScoringBreakdowns(
                 config = leagueCfg,
                 week = week,
+                rawMatchups = rawMatchups,
+                playersDb = _uiState.value.playersDb,
                 apiKey = apiKey,
                 mflUserIdCookie = cookie
               )
@@ -1542,7 +1544,13 @@ class GameDayCoordinator(
                 previousSameWeekBreakdowns
               } else {
                 pendingBreakdownRetryByLeague.remove(leagueCfg.leagueId)
-                fetched
+                val combined = HashMap(previousSameWeekBreakdowns)
+                for ((pid, lines) in fetched) {
+                  if (lines.isNotEmpty()) {
+                    combined[pid] = lines
+                  }
+                }
+                combined
               }
             }
             else -> {

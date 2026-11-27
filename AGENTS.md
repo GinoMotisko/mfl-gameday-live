@@ -47,7 +47,7 @@ This executes:
 Whenever publishing a new GitHub Release (`vX.Y.Z` marked `--latest`):
 1. Upload `MFL-GameDay-Live.apk`, `MFL-GameDay-Live-vX.Y.Z.apk`, and `MFL-GameDay-Live-vX.Y.Z.apk.sha256` (exact format: `<64-hex-sha256>  MFL-GameDay-Live.apk`).
 2. `https://www.motisko.com/gameday/apk` redirects (`HTTP 307`) to `releases/latest/download/MFL-GameDay-Live.apk`, and `https://www.motisko.com/api/gameday/release` reads the latest release version & `.sha256` asset dynamically, while `GameDayShowcase.tsx` holds the current fallback version + SHA-256. Update `GameDayShowcase.tsx` fallback constants when bumping major/minor releases so SSR HTML matches immediately.
-3. Stage the matching `GameDay-Live-PlayStore-vX.Y.Z.aab` and `mapping-playStoreRelease-vX.Y.Z.txt` into `C:/Users/motis/OneDrive/Motisko Ventures LLC/Google-Play-Console-Kit/2-App-Bundle-And-Store-Graphics/`.
+3. Bump `docs/PLAY_STORE_SUBMISSION_PACK.md` (`vX.Y.Z` / `versionCode = <N>` / artifact filenames & smoke command) and stage the matching `GameDay-Live-PlayStore-vX.Y.Z.aab`, `mapping-playStoreRelease-vX.Y.Z.txt`, and `PLAY_STORE_SUBMISSION_PACK.md` into `C:/Users/motis/OneDrive/Motisko Ventures LLC/Google-Play-Console-Kit/2-App-Bundle-And-Store-Graphics/`.
 4. **Standing Post-Release Store & Showcase Smoke Regression (Mandatory After Every Store Release)**:
    - Immediately after every Google Play & GitHub Release push, execute `node scripts/play-publish.mjs smoke --version=vX.Y.Z --version-code=<N>` verifying:
      1) `node scripts/play-publish.mjs status` confirms the latest `versionCode` (`vX.Y.Z`) is active on `production` (`status: "completed"` or staged `inProgress`) and `publicStoreRetailLive === true` (`HTTP 200`).

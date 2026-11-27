@@ -1222,7 +1222,9 @@ private fun PlayerScoreRow(
           style = MaterialTheme.typography.bodyLarge,
           fontWeight = FontWeight.Bold,
           fontFamily = FontFamily.Monospace,
-          color = if (hasHighlight) ext.turfAccent else MaterialTheme.colorScheme.onSurface
+          color = if (hasHighlight) ext.turfAccent else MaterialTheme.colorScheme.onSurface,
+          maxLines = 1,
+          softWrap = false
         )
         when {
           hasHighlight -> {
@@ -1700,7 +1702,9 @@ private fun PlayerScoringDetailsCard(
           style = MaterialTheme.typography.titleSmall,
           fontFamily = FontFamily.Monospace,
           fontWeight = FontWeight.Black,
-          color = MaterialTheme.colorScheme.onSurface
+          color = MaterialTheme.colorScheme.onSurface,
+          maxLines = 1,
+          softWrap = false
         )
         if (showWinProb && playerScore.isPlayingNow && playerScore.livePaceProjection > playerScore.score + 0.05) {
           Text(
@@ -1728,7 +1732,7 @@ private fun PlayerScoringDetailsCard(
         modifier = Modifier
           .fillMaxWidth()
           .padding(horizontal = 10.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
       ) {
         Text(
@@ -1738,13 +1742,18 @@ private fun PlayerScoringDetailsCard(
             else -> "No scoring stats recorded"
           },
           fontSize = 10.5.sp,
-          color = ext.subtleText
+          color = ext.subtleText,
+          modifier = Modifier.weight(1f),
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis
         )
         Text(
           text = fmt.format(playerScore.score),
           fontSize = 10.5.sp,
           fontFamily = FontFamily.Monospace,
-          color = ext.subtleText
+          color = ext.subtleText,
+          maxLines = 1,
+          softWrap = false
         )
       }
     } else {
@@ -1759,7 +1768,7 @@ private fun PlayerScoringDetailsCard(
             modifier = Modifier
               .fillMaxWidth()
               .padding(horizontal = 4.dp, vertical = 1.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
           ) {
             Text(
@@ -1769,7 +1778,10 @@ private fun PlayerScoringDetailsCard(
                 "${audit.items.size} stat lines aggregated"
               },
               fontSize = 9.5.sp,
-              color = ext.subtleText
+              color = ext.subtleText,
+              modifier = Modifier.weight(1f),
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis
             )
             Text(
               text = if (audit.hasRoundingOrBonusDelta && precision > 0) {
@@ -1780,7 +1792,9 @@ private fun PlayerScoringDetailsCard(
               fontSize = 10.5.sp,
               fontFamily = FontFamily.Monospace,
               fontWeight = FontWeight.ExtraBold,
-              color = MaterialTheme.colorScheme.primary
+              color = MaterialTheme.colorScheme.primary,
+              maxLines = 1,
+              softWrap = false
             )
           }
         }

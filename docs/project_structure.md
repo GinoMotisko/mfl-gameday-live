@@ -25,6 +25,7 @@ MFL-GameDay-Android-app/
 │       │   │   │   ├── GameDayStorage.kt             # Android Keystore AES-GCM credential vault & self-healing cache
 │       │   │   │   ├── LenientJson.kt                # Polymorphic OneOrMany & lenient MFL wire decoders
 │       │   │   │   ├── MflApiClient.kt               # Throttled/retry-hardened MFL login, myleagues, league, liveScoring
+│       │   │   │   ├── MflLiveStatsBreakdownCalculator.kt # Evaluates ajax_ls league rules + live_stats_<week>.txt for bench breakdowns
 │       │   │   │   ├── ProfileSyncCodec.kt           # Secret-free cross-device & cross-edition JSON setup export/import
 │       │   │   │   └── ScoringBreakdownParser.kt     # HTML parser for MFL live_scoring_summary category points
 │       │   │   ├── diagnostics/
