@@ -813,6 +813,33 @@ class MflAndEspnPipelineIntegrationTest {
       val secondMap = client.fetchScoringBreakdowns(config, week = 12, rawMatchups = rawMatchups)
       assertEquals(4, server.requestCount)
       assertEquals(9.20, secondMap["13595"].orEmpty().sumOf { it.points }, 0.001)
+
+      // Third call: second league sharing the same live_stats cache observes a newer TD score (15.20 vs cached 9.20)
+      val leagueB = config.copy(leagueId = "10480", leagueName = "Second League")
+      val updatedMatchups = listOf(
+        RawMflMatchup(
+          franchises = listOf(
+            RawMflFranchiseLive(
+              franchiseId = "0010",
+              score = 95.80,
+              isHome = true,
+              playersCurrentlyPlaying = 2,
+              playersYetToPlay = 3,
+              gameSecondsRemaining = 800,
+              players = listOf(
+                RawMflPlayerScore("13595", score = 15.20, isStarter = false, gameSecondsRemaining = 800)
+              )
+            )
+          )
+        )
+      )
+      server.enqueue(MockResponse().setBody("")) // leagueB summary omits bench
+      server.enqueue(MockResponse().setBody(ajaxRulesBody)) // leagueB ajax_ls
+      val lagRes = client.fetchScoringBreakdownsWithStatus(leagueB, week = 12, rawMatchups = updatedMatchups)
+      assertTrue(
+        "Cached live_stats lagging leagueB's score must mark incomplete so coordinator retries",
+        lagRes.hasIncompleteBenchHydration
+      )
     } finally {
       server.shutdown()
     }

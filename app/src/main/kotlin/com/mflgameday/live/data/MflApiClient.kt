@@ -543,9 +543,12 @@ class MflApiClient(
       val statsKey = "${statsBaseRaw}_$statsFilename"
       val cachedStats = liveWeekStatsCache[statsKey]
       val statsNow = System.currentTimeMillis()
+      val usedCachedLiveStats: Boolean
       val liveStats = if (cachedStats != null && statsNow - cachedStats.first <= LIVE_WEEK_STATS_CACHE_TTL_MS) {
+        usedCachedLiveStats = true
         cachedStats.second
       } else {
+        usedCachedLiveStats = false
         val statsUrl = "$statsBaseRaw/$statsFilename".toHttpUrlOrNull()
           ?.newBuilder()
           ?.addQueryParameter("RANDOM", statsNow.toString())
@@ -566,6 +569,7 @@ class MflApiClient(
         }
       }
 
+      val scoreTolerance = if (config.precision == 0) 0.55 else 0.05
       for (missing in missingPlayers) {
         val computed = MflLiveStatsBreakdownCalculator.computeBreakdownsForPlayer(
           playerId = missing.playerId,
@@ -576,6 +580,12 @@ class MflApiClient(
         )
         if (computed.isNotEmpty()) {
           combined[missing.playerId] = computed
+        }
+        if (usedCachedLiveStats && kotlin.math.abs(missing.score) > 0.001) {
+          val computedSum = computed.sumOf { it.points }
+          if (computed.isEmpty() || kotlin.math.abs(computedSum - missing.score) > scoreTolerance) {
+            hydrationIncomplete = true
+          }
         }
       }
     } catch (ce: CancellationException) {
