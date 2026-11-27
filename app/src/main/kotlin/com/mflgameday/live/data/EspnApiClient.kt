@@ -205,13 +205,19 @@ class EspnApiClient(
   internal fun parseSummary(fallbackEventId: String, root: JsonObject): EspnGameSummary {
     val eventId = root.obj("header")?.str("id") ?: fallbackEventId
 
-    // Clean summary text for scoring plays ("Chris Godwin 94 Yd pass from Baker Mayfield (Chase McLaughlin Kick)")
+    // Clean summary text and scoringType hints for scoring plays ("Chris Godwin 94 Yd pass from Baker Mayfield (Chase McLaughlin Kick)")
     val cleanScoringText = HashMap<String, String>()
+    val scoringTypeByPlayId = HashMap<String, String>()
     (root["scoringPlays"] as? JsonArray)?.mapNotNull { it as? JsonObject }?.forEach { sp ->
       val id = sp.str("id")
       val text = sp.str("text")
       if (id != null && text != null && !cleanScoringText.containsKey(id)) {
         cleanScoringText[id] = text
+      }
+      val scoringTypeObj = sp.obj("scoringType")
+      val scoringType = scoringTypeObj?.str("name") ?: scoringTypeObj?.str("abbreviation")
+      if (id != null && scoringType != null && !scoringTypeByPlayId.containsKey(id)) {
+        scoringTypeByPlayId[id] = scoringType
       }
     }
 
@@ -229,13 +235,17 @@ class EspnApiClient(
     }
 
     val plays = deduplicated
-      .mapNotNull { p -> parsePlay(p, cleanScoringText) }
+      .mapNotNull { p -> parsePlay(p, cleanScoringText, scoringTypeByPlayId) }
       .sortedBy { it.sequence }
 
     return EspnGameSummary(eventId = eventId, plays = plays)
   }
 
-  private fun parsePlay(pObj: JsonObject, cleanScoringText: Map<String, String>): NflPlay? {
+  private fun parsePlay(
+    pObj: JsonObject,
+    cleanScoringText: Map<String, String>,
+    scoringTypeByPlayId: Map<String, String>
+  ): NflPlay? {
     val id = pObj.str("id") ?: return null
     val seq = pObj.str("sequenceNumber")?.toIntOrNull()
       ?: id.takeLast(6).toIntOrNull()
@@ -254,7 +264,8 @@ class EspnApiClient(
         espnType = typeText,
         isScoring = isScoring,
         playText = rawText,
-        yardsStat = yardage
+        yardsStat = yardage,
+        scoringTypeHint = scoringTypeByPlayId[id]
       ),
       text = summaryText ?: rawText,
       rawPlayText = rawText,

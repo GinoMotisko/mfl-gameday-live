@@ -147,6 +147,19 @@ class MflApiClient(
       if (!statusErr.isNullOrEmpty() && !statusErr.equals("OK", ignoreCase = true)) return statusErr
       return null
     }
+
+    /**
+     * Normalizes MFL's `franchise_id` string (which can return `"0000,0007"` for Commissioner accounts)
+     * by preferring an actual owned franchise ID over the `"0000"` Commissioner pseudo-ID.
+     */
+    internal fun normalizeFranchiseId(raw: String?): String? {
+      val tokens = raw?.split(',', ' ', ';')
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        .orEmpty()
+      if (tokens.isEmpty()) return null
+      return tokens.firstOrNull { it != "0000" }
+    }
   }
 
   /**
@@ -214,7 +227,7 @@ class MflApiClient(
         name = name,
         year = leagueYear,
         url = rawUrl,
-        franchiseId = obj.str("franchise_id"),
+        franchiseId = normalizeFranchiseId(obj.str("franchise_id")),
         franchiseName = obj.str("franchise_name")
       )
     }

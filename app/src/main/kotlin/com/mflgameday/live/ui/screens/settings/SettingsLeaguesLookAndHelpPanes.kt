@@ -27,8 +27,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.Add
@@ -53,6 +55,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -101,6 +104,7 @@ fun MyLeaguesPane(
   val context = LocalContext.current
   val ext = LocalGameDayColors.current
   var pendingRemoveLeague by remember { mutableStateOf<LeagueConfig?>(null) }
+  var pendingSwitchLeague by remember { mutableStateOf<LeagueConfig?>(null) }
   var showImportDialog by rememberSaveable { mutableStateOf(false) }
   var profileSyncFeedback by remember { mutableStateOf<String?>(null) }
 
@@ -144,6 +148,12 @@ fun MyLeaguesPane(
     } else {
       Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         uiState.leagues.forEach { cfg ->
+          val leagueSnap = uiState.leagueSnapshots[cfg.leagueId]
+          val opponents = leagueSnap?.matchups
+            ?.filter { it.involvesMyFranchise }
+            ?.mapNotNull { it.opponentSide(cfg.franchiseId)?.franchiseName }
+            ?.distinct()
+            .orEmpty()
           Surface(
             color = ext.cardSurface,
             shape = RoundedCornerShape(14.dp),
@@ -158,7 +168,7 @@ fun MyLeaguesPane(
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.SpaceBetween
             ) {
-              Column(modifier = Modifier.weight(1f)) {
+              Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                   Text(cfg.leagueName, fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.bodyLarge)
                   if (cfg.isBestBall) {
@@ -173,10 +183,28 @@ fun MyLeaguesPane(
                   }
                 }
                 Text(
-                  text = "${cfg.franchiseName} · League #${cfg.leagueId}",
+                  text = "${cfg.franchiseName} (#${cfg.franchiseId}) · League #${cfg.leagueId}",
                   style = MaterialTheme.typography.labelSmall,
                   color = ext.subtleText
                 )
+                if (leagueSnap != null) {
+                  val oppSummary = if (opponents.isNotEmpty()) {
+                    "Week ${leagueSnap.week} vs ${opponents.joinToString(", ")}"
+                  } else {
+                    "Week ${leagueSnap.week} · No active matchup found for #${cfg.franchiseId}"
+                  }
+                  Text(
+                    text = oppSummary,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (opponents.isNotEmpty()) ext.turfAccent else MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.SemiBold
+                  )
+                }
+              }
+              if ((leagueSnap?.franchises?.size ?: 0) > 1) {
+                TextButton(onClick = { pendingSwitchLeague = cfg }) {
+                  Text("Switch Team", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                }
               }
               Switch(
                 checked = cfg.includeInAnnouncements,
@@ -249,6 +277,67 @@ fun MyLeaguesPane(
         }
       }
     }
+  }
+
+  val switchTarget = pendingSwitchLeague
+  if (switchTarget != null) {
+    val franchises = uiState.leagueSnapshots[switchTarget.leagueId]
+      ?.franchises
+      ?.values
+      ?.sortedBy { it.id }
+      .orEmpty()
+    var pickedId by remember(switchTarget.leagueId) { mutableStateOf(switchTarget.franchiseId) }
+
+    AlertDialog(
+      onDismissRequest = { pendingSwitchLeague = null },
+      title = { Text("Switch Team · ${switchTarget.leagueName}", fontWeight = FontWeight.ExtraBold) },
+      text = {
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(260.dp)
+            .verticalScroll(rememberScrollState()),
+          verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+          franchises.forEach { f ->
+            val selected = pickedId == f.id
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { pickedId = f.id }
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              RadioButton(selected = selected, onClick = { pickedId = f.id })
+              Text(
+                text = "${f.name} (#${f.id})",
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+              )
+            }
+          }
+        }
+      },
+      confirmButton = {
+        Button(
+          onClick = {
+            val chosen = franchises.firstOrNull { it.id == pickedId }
+            if (chosen != null) {
+              coordinator.changeLeagueFranchise(switchTarget.leagueId, chosen.id, chosen.name)
+            }
+            pendingSwitchLeague = null
+          },
+          enabled = pickedId.isNotBlank() && franchises.any { it.id == pickedId }
+        ) {
+          Text("Save Team")
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { pendingSwitchLeague = null }) {
+          Text("Cancel")
+        }
+      }
+    )
   }
 
   if (showImportDialog) {

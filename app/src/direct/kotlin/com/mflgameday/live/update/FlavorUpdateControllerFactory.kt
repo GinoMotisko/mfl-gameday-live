@@ -139,7 +139,7 @@ private class DirectApkUpdateController(
     private const val KEY_LAST_REMOTE_VERSION = "direct_last_remote_version"
     private const val KEY_DISMISSED_VERSION = "direct_dismissed_version"
     private const val KEY_DISMISSED_AT_MILLIS = "direct_dismissed_at_millis"
-    private const val CHECK_INTERVAL_MILLIS = 24L * 60 * 60 * 1000L
+    private const val CHECK_INTERVAL_MILLIS = 30L * 60 * 1000L
     private const val RELEASE_API_URL = "https://www.motisko.com/api/gameday/release"
     private const val SHOWCASE_URL = "https://www.motisko.com/gameday"
   }

@@ -31,6 +31,18 @@ import kotlin.math.sqrt
 object BestBallAndPaceCalculator {
 
   private val positionOrder = listOf("QB", "RB", "WR", "TE", "PK", "Def", "ST", "DL", "DE", "DT", "LB", "CB", "S", "DB")
+  private val patKickParenRegex = Regex("""\([^)]*\b(?:kick|extra point|pat)\b[^)]*\)\s*$""", RegexOption.IGNORE_CASE)
+  private val extraPointClauseRegex = Regex("""\b[A-Z][a-zA-Z]*\.[\w'-]+\s+extra\s+point\b.*$""", RegexOption.IGNORE_CASE)
+  private val centerHolderRegex = Regex("""\bCenter-[^,.]+(?:,\s*Holder-[^,.]+)?""", RegexOption.IGNORE_CASE)
+  private val injuryClauseRegex = Regex(
+    """(?:\*\*\s*Injury Update:.*$|\b[A-Z]{2,4}-[A-Z][a-zA-Z]*\.[\w'-]+\s+was\s+injured[^.]*\.?)""",
+    RegexOption.IGNORE_CASE
+  )
+  private val intendedForRegex = Regex(
+    """\bintended\s+for\s+[A-Z][a-zA-Z]*\.(?:St\.\s*)?[A-Z][\w'-]+(?:\s+(?:Jr\.?|Sr\.?|II|III|IV|V))?""",
+    RegexOption.IGNORE_CASE
+  )
+  private val parenClauseRegex = Regex("""\([^)]*\)|\[[^\]]*\]""")
 
   fun buildLeagueSnapshot(
     config: LeagueConfig,
@@ -354,26 +366,50 @@ object BestBallAndPaceCalculator {
     if (event.kind == GameEventKind.FANTASY_LEAD_CHANGE) return emptyList()
     val play = event.play ?: return emptyList()
     val gameTeams = event.game.teams.toSet()
-    val combinedText = "${play.text} ${play.rawPlayText}"
+    val evTeam = event.team
+
+    var cleanPlayText = play.text.replace(injuryClauseRegex, " ").replace(centerHolderRegex, " ")
+    var cleanRawText = play.rawPlayText.replace(injuryClauseRegex, " ").replace(centerHolderRegex, " ")
+    if (event.kind == GameEventKind.TOUCHDOWN) {
+      cleanPlayText = cleanPlayText.replace(patKickParenRegex, " ")
+      cleanRawText = cleanRawText.replace(extraPointClauseRegex, " ")
+    }
+    val sanitizedText = "$cleanPlayText $cleanRawText"
+    val isDefensiveOrReturnEvent = when (event.kind) {
+      GameEventKind.SACK,
+      GameEventKind.INTERCEPTION,
+      GameEventKind.FUMBLE_LOST,
+      GameEventKind.SAFETY,
+      GameEventKind.FOURTH_DOWN_STOP -> true
+      GameEventKind.TOUCHDOWN,
+      GameEventKind.OTHER_SCORE ->
+        (evTeam != null && play.offenseTeamId != null && play.offenseTeamId != evTeam.espnId) || play.isTurnover
+      else -> false
+    }
+    val victimSearchText = if (event.kind == GameEventKind.SACK || event.kind == GameEventKind.SAFETY) {
+      "$cleanPlayText ${cleanRawText.replace(parenClauseRegex, " ")}"
+    } else {
+      sanitizedText
+    }.replace(intendedForRegex, " ")
 
     return exposures.values.filter { exp ->
       val p = exp.player
       if (p.team !in gameTeams) return@filter false
       if (p.isDefensiveTeamUnit) {
-        val evTeam = event.team ?: return@filter false
-        if (evTeam.team != p.team) return@filter false
+        if (evTeam == null || evTeam.team != p.team) return@filter false
         when (event.kind) {
           GameEventKind.SACK,
           GameEventKind.INTERCEPTION,
           GameEventKind.FUMBLE_LOST,
           GameEventKind.SAFETY,
           GameEventKind.FOURTH_DOWN_STOP -> true
-          GameEventKind.TOUCHDOWN -> play.offenseTeamId != null && play.offenseTeamId != evTeam.espnId
+          GameEventKind.TOUCHDOWN,
+          GameEventKind.OTHER_SCORE ->
+            (play.offenseTeamId != null && play.offenseTeamId != evTeam.espnId) || play.isTurnover
           else -> false
         }
       } else if (p.isOffensiveTeamUnit) {
-        val evTeam = event.team ?: return@filter false
-        if (evTeam.team != p.team) return@filter false
+        if (evTeam == null || evTeam.team != p.team) return@filter false
         val isTeamOffensePlay = play.offenseTeamId == null || play.offenseTeamId == evTeam.espnId
         val posCode = p.position.trim().uppercase()
         when (posCode) {
@@ -381,8 +417,8 @@ object BestBallAndPaceCalculator {
           "TMPK" -> isTeamOffensePlay && (
             event.kind == GameEventKind.FIELD_GOAL || (
               event.kind == GameEventKind.TRY_FAILED &&
-                !combinedText.contains("two-point", ignoreCase = true) &&
-                !combinedText.contains("2-point", ignoreCase = true)
+                !sanitizedText.contains("two-point", ignoreCase = true) &&
+                !sanitizedText.contains("2-point", ignoreCase = true)
               )
             )
           "OFF" -> isTeamOffensePlay && (
@@ -406,15 +442,12 @@ object BestBallAndPaceCalculator {
                 it.team == p.team && it.position.equals(targetPos, ignoreCase = true)
               }
               if (candidates.isNotEmpty()) {
-                candidates.any { candidate ->
-                  combinedText.contains(candidate.displayName, ignoreCase = true) ||
-                    (candidate.abbreviatedEspnName != null && combinedText.contains(candidate.abbreviatedEspnName!!, ignoreCase = true))
-                }
+                candidates.any { candidate -> playerMatchesText(candidate, sanitizedText) }
               } else {
                 when (targetPos) {
-                  "QB" -> combinedText.contains("pass", ignoreCase = true) ||
-                    combinedText.contains("scramble", ignoreCase = true) ||
-                    combinedText.contains("sneak", ignoreCase = true)
+                  "QB" -> sanitizedText.contains("pass", ignoreCase = true) ||
+                    sanitizedText.contains("scramble", ignoreCase = true) ||
+                    sanitizedText.contains("sneak", ignoreCase = true)
                   else -> false
                 }
               }
@@ -423,10 +456,88 @@ object BestBallAndPaceCalculator {
           else -> false
         }
       } else {
-        combinedText.contains(p.displayName, ignoreCase = true) ||
-          (p.abbreviatedEspnName != null && combinedText.contains(p.abbreviatedEspnName!!, ignoreCase = true))
+        if (!isDefensiveOrReturnEvent) {
+          if (evTeam != null && p.team != evTeam.team) return@filter false
+          if (
+            p.isDefensiveSide &&
+            (
+              event.kind == GameEventKind.BIG_PLAY ||
+                event.kind == GameEventKind.FIRST_DOWN ||
+                event.kind == GameEventKind.FIELD_GOAL ||
+                event.kind == GameEventKind.TRY_FAILED
+              )
+          ) {
+            return@filter false
+          }
+          playerMatchesText(p, sanitizedText)
+        } else if (evTeam != null && p.team == evTeam.team) {
+          playerMatchesText(p, sanitizedText)
+        } else {
+          if (p.isDefensiveSide) return@filter false
+          playerMatchesText(p, victimSearchText)
+        }
       }
     }
+  }
+
+  /**
+   * Formats clear, player-named fantasy context distinguishing the play's credited side
+   * (e.g., scoring offense or sacking defense) from an opposing offensive victim
+   * (e.g., a sacked QB, intercepted passer, or ball-carrier tackled for a safety).
+   */
+  fun formatFantasyContextSuffix(
+    event: GameEvent,
+    involved: List<PlayerCrossLeagueExposure>
+  ): String? {
+    if (involved.isEmpty() || event.kind == GameEventKind.FANTASY_LEAD_CHANGE) return null
+    val evTeam = event.team
+    val (credited, victims) = involved.partition { exp ->
+      evTeam == null || exp.player.team == evTeam.team
+    }
+    val clauses = ArrayList<String>(2)
+
+    if (credited.isNotEmpty()) {
+      val names = credited.map { it.player.displayName }.distinct().take(2).joinToString(" and ")
+      val credConflict = credited.any { it.role == ExposureRole.CONFLICT } ||
+        (credited.any { it.role == ExposureRole.MINE } && credited.any { it.role == ExposureRole.OPPONENT })
+      val myLeagues = credited.flatMap { it.myLeagueNames }.distinct()
+      val oppLeagues = credited.flatMap { it.opponentLeagueNames }.distinct()
+      val credClause = when {
+        credConflict && myLeagues.isNotEmpty() && oppLeagues.isNotEmpty() ->
+          "Conflict play on $names: starting for you in ${myLeagues.first()}, and against you in ${oppLeagues.first()}."
+        myLeagues.isNotEmpty() ->
+          "For your lineup — $names in ${myLeagues.joinToString(" and ")}."
+        oppLeagues.isNotEmpty() ->
+          "Against you — $names in ${oppLeagues.joinToString(" and ")}."
+        else -> null
+      }
+      if (credClause != null) clauses.add(credClause)
+    }
+
+    for (v in victims.take(2)) {
+      val name = v.player.displayName
+      val victimClause = when {
+        v.role == ExposureRole.CONFLICT && v.myLeagueNames.isNotEmpty() && v.opponentLeagueNames.isNotEmpty() ->
+          "Conflict starter $name: against yours in ${v.myLeagueNames.first()}, hurts opponent's in ${v.opponentLeagueNames.first()}."
+        v.myLeagueNames.isNotEmpty() ->
+          "Against your starter $name in ${v.myLeagueNames.joinToString(" and ")}."
+        v.opponentLeagueNames.isNotEmpty() ->
+          "Hurts opponent's $name in ${v.opponentLeagueNames.joinToString(" and ")}."
+        else -> null
+      }
+      if (victimClause != null) clauses.add(victimClause)
+    }
+
+    return clauses.joinToString(" ").takeIf { it.isNotBlank() }
+  }
+
+  private fun playerMatchesText(player: FantasyPlayer, searchText: String): Boolean {
+    return searchText.contains(player.displayName, ignoreCase = true) ||
+      (player.abbreviatedEspnName != null && searchText.contains(player.abbreviatedEspnName!!, ignoreCase = true)) ||
+      (
+        player.abbreviatedEspnNameWithoutSuffix != null &&
+          searchText.contains(player.abbreviatedEspnNameWithoutSuffix!!, ignoreCase = true)
+        )
   }
 
   fun isEventRelevantForScope(

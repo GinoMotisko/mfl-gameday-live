@@ -18,7 +18,8 @@ import kotlin.math.abs
  * ESPN play-by-play drives, and MFL fantasy matchups into deduplicated [GameEvent]s.
  */
 class EventDiffer(
-  private val maxPlayAgeMillis: Long = 300_000L
+  private val maxPlayAgeMillis: Long = 480_000L,
+  private val maxReviewUpgradeAgeMillis: Long = 1_200_000L
 ) {
   private data class PendingTry(
     val gameId: String,
@@ -246,7 +247,17 @@ class EventDiffer(
       if (play.kind.isScoring) announcedScoringPlayIds.add(play.id)
 
       val eventKind = mapPlayKindToEventKind(play.kind) ?: continue
-      if (!isFreshPlay(play, nowMillis, firstSight)) continue
+      val isFresh = if (!isNewPlay && newlyScoringAfterReview) {
+        isWithinAge(play, nowMillis, firstSight = false, maxAge = maxReviewUpgradeAgeMillis)
+      } else {
+        isFreshPlay(play, nowMillis, firstSight)
+      }
+      val canBackfillLiveScoreSilently =
+        !isFresh &&
+          firstSight &&
+          play.kind.isScoring &&
+          (game.phase == GamePhase.LIVE || game.phase == GamePhase.HALFTIME)
+      if (!isFresh && !canBackfillLiveScoreSilently) continue
 
       val previous = if (index > 0) plays[index - 1] else null
       val creditedSide: NflSide?
@@ -254,7 +265,7 @@ class EventDiffer(
 
       if (play.kind.isScoring) {
         creditedSide = determineScoringSide(play, previous, game)
-        if (play.kind == PlayKind.TOUCHDOWN && creditedSide != null) {
+        if (!canBackfillLiveScoreSilently && play.kind == PlayKind.TOUCHDOWN && creditedSide != null) {
           val scoredAway = creditedSide.espnId == game.away.espnId
           val before = if (scoredAway) (previous?.awayScore ?: 0) else (previous?.homeScore ?: 0)
           val after = if (scoredAway) play.awayScore else play.homeScore
@@ -287,8 +298,9 @@ class EventDiffer(
           play = play,
           awayScore = play.awayScore,
           homeScore = play.homeScore,
-          observedAtMillis = nowMillis,
-          tryPending = tryPending
+          observedAtMillis = if (canBackfillLiveScoreSilently) (play.wallclockEpochMillis ?: nowMillis) else nowMillis,
+          tryPending = tryPending,
+          isSilentBackfill = canBackfillLiveScoreSilently
         )
       )
     }
@@ -431,9 +443,17 @@ class EventDiffer(
     )
   }
 
-  private fun isFreshPlay(play: NflPlay, nowMillis: Long, firstSight: Boolean): Boolean {
+  private fun isFreshPlay(play: NflPlay, nowMillis: Long, firstSight: Boolean): Boolean =
+    isWithinAge(play, nowMillis, firstSight, maxPlayAgeMillis)
+
+  private fun isWithinAge(
+    play: NflPlay,
+    nowMillis: Long,
+    firstSight: Boolean,
+    maxAge: Long
+  ): Boolean {
     val wc = play.wallclockEpochMillis ?: return !firstSight
-    return (nowMillis - wc) <= maxPlayAgeMillis
+    return (nowMillis - wc) <= maxAge
   }
 
   private fun determineScoringSide(play: NflPlay, previous: NflPlay?, game: NflGameState): NflSide? {

@@ -646,6 +646,45 @@ class GameDayCoordinator(
     }
   }
 
+  fun changeLeagueFranchise(leagueId: String, franchiseId: String, franchiseName: String) {
+    val cleanId = franchiseId.trim()
+    val cleanName = franchiseName.trim().ifEmpty { "Team $cleanId" }
+    if (cleanId.isEmpty()) return
+    val updatedLeagues = _uiState.value.leagues.map { cfg ->
+      if (cfg.leagueId == leagueId) cfg.copy(franchiseId = cleanId, franchiseName = cleanName) else cfg
+    }
+    if (_uiState.value.settings.operatingMode != OperatingMode.DEMO_SIMULATOR) {
+      storage.saveLeagues(updatedLeagues)
+    }
+    _uiState.update { state ->
+      val updatedSnaps = state.leagueSnapshots.mapValues { (id, snap) ->
+        if (id != leagueId) {
+          snap
+        } else {
+          val updatedConfig = snap.config.copy(franchiseId = cleanId, franchiseName = cleanName)
+          val updatedMatchups = snap.matchups.map { m ->
+            val involvesMe = m.away.franchiseId == cleanId || m.home.franchiseId == cleanId
+            m.copy(involvesMyFranchise = involvesMe)
+          }.sortedByDescending { it.involvesMyFranchise }
+          snap.copy(config = updatedConfig, matchups = updatedMatchups)
+        }
+      }
+      val exposures = BestBallAndPaceCalculator.buildCrossLeagueExposure(
+        snapshots = updatedSnaps.values,
+        playersDb = state.playersDb
+      )
+      state.copy(
+        leagues = updatedLeagues,
+        leagueSnapshots = updatedSnaps,
+        crossLeagueExposures = exposures,
+        statusMessage = "Switched team in ${updatedLeagues.firstOrNull { it.leagueId == leagueId }?.leagueName ?: leagueId} to $cleanName"
+      )
+    }
+    if (_uiState.value.settings.operatingMode != OperatingMode.DEMO_SIMULATOR) {
+      refreshNow()
+    }
+  }
+
   /**
    * Exports a secret-free JSON snapshot of the user's tracked MFL leagues, voice commentator,
    * broadcast scope/categories, and theme so setups clone across Phone <-> Tablet or Direct <-> Play Store in 2 taps.
@@ -1603,10 +1642,12 @@ class GameDayCoordinator(
         exposures = exposures,
         involved = involved
       )
-      val shouldSpeak = forceSpeak || (
-        !settings.muted &&
-          category in settings.enabledCategories &&
-          relevant
+      val shouldSpeak = !event.isSilentBackfill && (
+        forceSpeak || (
+          !settings.muted &&
+            category in settings.enabledCategories &&
+            relevant
+          )
         )
 
       val entry = buildLogEntry(
@@ -1640,13 +1681,17 @@ class GameDayCoordinator(
 
     val combinedLog = (newEntries.reversed() + state.playLog).take(250)
     val bannerCandidate = newEntries.lastOrNull {
-      it.event.kind == GameEventKind.TOUCHDOWN ||
-        it.event.kind == GameEventKind.INTERCEPTION ||
-        it.event.kind == GameEventKind.FUMBLE_LOST ||
-        it.event.kind == GameEventKind.SACK ||
-        it.event.kind == GameEventKind.FIELD_GOAL ||
-        it.event.kind == GameEventKind.RED_ZONE ||
-        it.event.kind == GameEventKind.FANTASY_LEAD_CHANGE
+      !it.event.isSilentBackfill && (
+        it.event.kind == GameEventKind.TOUCHDOWN ||
+          it.event.kind == GameEventKind.INTERCEPTION ||
+          it.event.kind == GameEventKind.FUMBLE_LOST ||
+          it.event.kind == GameEventKind.SACK ||
+          it.event.kind == GameEventKind.FIELD_GOAL ||
+          it.event.kind == GameEventKind.SAFETY ||
+          it.event.kind == GameEventKind.OTHER_SCORE ||
+          it.event.kind == GameEventKind.RED_ZONE ||
+          it.event.kind == GameEventKind.FANTASY_LEAD_CHANGE
+        )
     }
 
     _uiState.update {
@@ -1695,13 +1740,8 @@ class GameDayCoordinator(
 
     val myLeagues = involved.flatMap { it.myLeagueNames }.distinct()
     val oppLeagues = involved.flatMap { it.opponentLeagueNames }.distinct()
-    val fantasySuffix = if (includeFantasyContextInSpeech && involved.isNotEmpty() && event.kind != GameEventKind.FANTASY_LEAD_CHANGE) {
-      when {
-        isConflict -> "Conflict play: starting for you in ${myLeagues.first()}, and against you in ${oppLeagues.first()}."
-        myLeagues.isNotEmpty() -> "For your lineup in ${myLeagues.joinToString(" and ")}."
-        oppLeagues.isNotEmpty() -> "Against you in ${oppLeagues.joinToString(" and ")}."
-        else -> null
-      }
+    val fantasySuffix = if (includeFantasyContextInSpeech) {
+      BestBallAndPaceCalculator.formatFantasyContextSuffix(event, involved)
     } else null
 
     val spoken = PlaySpeechFormatter.format(

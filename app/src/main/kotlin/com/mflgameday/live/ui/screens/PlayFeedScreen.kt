@@ -53,6 +53,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mflgameday.live.model.ExposureRole
+import com.mflgameday.live.model.GameEventKind
 import com.mflgameday.live.model.PlayLogEntry
 import com.mflgameday.live.model.SpokenCategory
 import com.mflgameday.live.service.GameDayCoordinator
@@ -90,7 +91,19 @@ fun PlayFeedScreen(
         FeedFilter.SCORES -> cat == SpokenCategory.TOUCHDOWNS ||
           cat == SpokenCategory.FIELD_GOALS ||
           cat == SpokenCategory.FANTASY_SWINGS
-        FeedFilter.BIG_DEFENSE -> cat == SpokenCategory.TURNOVERS || cat == SpokenCategory.SACKS
+        FeedFilter.BIG_DEFENSE -> cat == SpokenCategory.TURNOVERS ||
+          cat == SpokenCategory.SACKS ||
+          (
+            entry.event.kind == GameEventKind.TOUCHDOWN &&
+              (
+                entry.event.play?.isTurnover == true ||
+                  (
+                    entry.event.play?.offenseTeamId != null &&
+                      entry.event.team != null &&
+                      entry.event.play.offenseTeamId != entry.event.team.espnId
+                    )
+                )
+            )
         FeedFilter.RED_ZONE -> cat == SpokenCategory.RED_ZONE
         FeedFilter.MY_LEAGUES -> entry.involvesMine || entry.involvesOpponent || entry.isConflictPlay
       }

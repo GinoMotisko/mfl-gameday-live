@@ -69,7 +69,7 @@ MFL-GameDay-Android-app/
 │       │   │       │   ├── AppUpdateController.kt    # Lifecycle-safe update banner & action contract
 │       │   │       │   └── InAppUpdatePolicy.kt      # Pure priority (0..3 Flexible / 4..5 Immediate) & 7d snooze policy
 │       │   └── res/                                  # Adaptive vector football/soundwave icon, strings, XML rules
-│       ├── direct/kotlin/com/mflgameday/live/update/ # Direct Pro APK 24h release notifier (Play-excluded)
+│       ├── direct/kotlin/com/mflgameday/live/update/ # Direct Pro APK 30m release notifier (Play-excluded)
 │       ├── playStore/                                # Google Play flavor overrides (AndroidManifest.xml, network_security_config.xml, Play Core AppUpdateManager)
 │       ├── test/kotlin/com/mflgameday/live/
 │       │   ├── data/ClayPackAndPositionsTest.kt          # 25-position MFL taxonomy & MockWebServer ETag delta manifest tests

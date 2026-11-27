@@ -33,8 +33,8 @@ android {
   defaultConfig {
     minSdk = 31
     targetSdk = 36
-    versionCode = 13
-    versionName = "1.3.3"
+    versionCode = 14
+    versionName = "1.3.4"
   }
 
   flavorDimensions += "distribution"

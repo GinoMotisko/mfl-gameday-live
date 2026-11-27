@@ -442,4 +442,105 @@ class MflAndEspnPipelineIntegrationTest {
       server.shutdown()
     }
   }
+
+  @Test
+  fun espnDefensiveStripSackFumbleRecoveryTouchdown_classifiesAsTouchdownNotOtherScore() = runTest {
+    val server = MockWebServer()
+    server.enqueue(
+      MockResponse().setBody(
+        """
+        {
+          "header": { "id": "401873083" },
+          "scoringPlays": [
+            {
+              "id": "401873083512",
+              "type": { "id": "80", "text": "Sack Opp Fumble Recovery", "abbreviation": "SFOP" },
+              "text": "T.J. Watt Fumble Recovery in End Zone (Chris Boswell Kick)",
+              "awayScore": 0,
+              "homeScore": 7,
+              "scoringType": { "name": "touchdown", "displayName": "Touchdown", "abbreviation": "TD" }
+            }
+          ],
+          "drives": {
+            "previous": [
+              {
+                "plays": [
+                  {
+                    "id": "401873083512",
+                    "sequenceNumber": "51200",
+                    "type": { "id": "80", "text": "Sack Opp Fumble Recovery" },
+                    "text": "(Shotgun) B.Nix sacked at DEN 6 for -13 yards. FUMBLES, RECOVERED by PIT-T.Watt at DEN -3. TOUCHDOWN. C.Boswell extra point is GOOD, Center-C.Kuntz, Holder-C.Johnston.",
+                    "scoringPlay": true,
+                    "isTurnover": true,
+                    "statYardage": 0,
+                    "awayScore": 0,
+                    "homeScore": 7,
+                    "period": { "number": 1 },
+                    "clock": { "displayValue": "6:03" },
+                    "start": { "team": { "id": "7" } },
+                    "wallclock": "2026-11-27T20:22:33Z"
+                  },
+                  {
+                    "id": "401873083901",
+                    "sequenceNumber": "51300",
+                    "type": { "id": "5", "text": "Rush" },
+                    "text": "J.Warren left tackle for 12 yards, TOUCHDOWN NULLIFIED by Penalty.",
+                    "scoringPlay": false,
+                    "awayScore": 0,
+                    "homeScore": 7
+                  },
+                  {
+                    "id": "401873083902",
+                    "sequenceNumber": "51400",
+                    "type": { "id": "24", "text": "Pass Reception" },
+                    "text": "B.Nix pass deep right to C.Sutton for 30 yards, TOUCHDOWN. The Replay Official reviewed the runner broke the plane ruling, and the play was REVERSED. B.Nix pass deep right to C.Sutton to PIT 1 for 29 yards.",
+                    "scoringPlay": false,
+                    "awayScore": 0,
+                    "homeScore": 7
+                  },
+                  {
+                    "id": "401873083903",
+                    "sequenceNumber": "51500",
+                    "type": { "id": "79", "text": "Defensive 2pt Conversion" },
+                    "text": "M.Fitzpatrick defensive two-point conversion.",
+                    "scoringPlay": true,
+                    "awayScore": 0,
+                    "homeScore": 9
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """.trimIndent()
+      )
+    )
+    server.start()
+    try {
+      val espn = EspnApiClient(baseUrl = server.url("/").toString().trimEnd('/'))
+      val summary = espn.fetchGameSummary("401873083")
+      assertEquals(4, summary.plays.size)
+
+      val wattTd = summary.plays[0]
+      assertEquals("401873083512", wattTd.id)
+      assertEquals(PlayKind.TOUCHDOWN, wattTd.kind)
+      assertTrue(wattTd.isTurnover)
+      assertEquals("7", wattTd.offenseTeamId)
+
+      assertFalse(summary.plays[1].kind == PlayKind.TOUCHDOWN)
+      assertFalse(summary.plays[2].kind == PlayKind.TOUCHDOWN)
+      assertEquals(PlayKind.OTHER_SCORE, summary.plays[3].kind)
+    } finally {
+      server.shutdown()
+    }
+  }
+
+  @Test
+  fun mflNormalizeFranchiseId_stripsCommissionerZeroZeroZeroZeroWhenOwnedFranchisePresent() {
+    assertEquals("0007", MflApiClient.normalizeFranchiseId("0000,0007"))
+    assertEquals("0002", MflApiClient.normalizeFranchiseId("0002, 0000"))
+    assertEquals("0006", MflApiClient.normalizeFranchiseId("0006"))
+    assertEquals(null, MflApiClient.normalizeFranchiseId("0000"))
+    assertEquals(null, MflApiClient.normalizeFranchiseId(null))
+  }
 }
