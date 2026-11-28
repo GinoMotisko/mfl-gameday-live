@@ -20,6 +20,7 @@ import {
   verifyPng24BitRgbBuffer,
   withPlayAppEdit
 } from './play-publish.mjs';
+import { assertNoSubmissionPackPhone } from './check-release-invariants.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -279,6 +280,19 @@ async function runTests() {
   });
   assert.equal(omittedPhoneSmoke.verdict, 'PASS_ALL_LIVE');
   assert.equal(omittedPhoneSmoke.checks.appSupportPhoneOmitted, true);
+
+  // Submission pack regression guard must reject both backtick-wrapped and plain phone entries
+  assert.throws(
+    () => assertNoSubmissionPackPhone('- **Contact Details**:\n  - **Phone**: `+1 570-684-4750`'),
+    /must keep app-level Store Listing Contact Phone intentionally blank/
+  );
+  assert.throws(
+    () => assertNoSubmissionPackPhone('- **Contact Details**:\n  - **Phone**: +1 570-684-4750'),
+    /must keep app-level Store Listing Contact Phone intentionally blank/
+  );
+  assertNoSubmissionPackPhone(
+    '- **Contact Details**:\n  - **Phone**: *(Intentionally blank — cleared via `androidpublisher v3` `edits.details`)*'
+  );
 
   // 6. discoverStoreGraphics discovers generated kit subdirectories (phone, 7in, 10in, foldable)
   const tmpKit = fs.mkdtempSync(path.join(os.tmpdir(), 'play-kit-test-'));
