@@ -78,6 +78,7 @@ MFL-GameDay-Android-app/
 │       │   ├── data/ProfileSyncCodecTest.kt              # Secret-stripping, URL allowlist & clamping unit tests
 │       │   ├── diagnostics/DiagnosticsAndLogoTest.kt     # Secret redaction & 32-team NFL logo / headshot tests
 │       │   ├── engine/EventDifferAndSpeechTest.kt        # Pure unit tests for EventDiffer, Speech, Best Ball & Conflicts
+│       │   ├── engine/LiveFeedChaosAndIdempotencyTest.kt # Adversarial CDN flap, Wi-Fi failover, restart & score-dip chaos tests
 │       │   ├── service/ServiceLifecyclePolicyTest.kt     # Home-background vs Recents swipe-close & projection pace tests
 │       │   ├── ui/VoiceAndFieldVisualPolicyTest.kt       # Unit tests for 6-commentator casting, 5-state rings & linear field geometry
 │       │   └── update/InAppUpdatePolicyTest.kt           # Unit tests for Flexible/Immediate priority, 7d snooze & semver comparison
@@ -92,8 +93,9 @@ MFL-GameDay-Android-app/
 ├── gradle/
 │   └── libs.versions.toml               # Version catalog
 ├── scripts/
-│   ├── verify.cmd                       # Single Windows verification entrypoint (+ Play API gate tests)
+│   ├── verify.cmd                       # Single Windows verification entrypoint (+ Play API & release invariant gates)
 │   ├── verify.sh                        # Single Linux/macOS/CI verification entrypoint (parity with verify.cmd)
+│   ├── check-release-invariants.mjs     # Zero-dep CI gate: version/doc lockstep, Play manifest stripping, SHA-pinned CI & AAB/APK checks
 │   ├── play-publish.mjs                 # Zero-dependency Google Play API v3 + Reporting CLI (1Password GameDay vault + DPAPI)
 │   ├── test-play-publish.mjs            # Automated unit tests for 24-bit RGB, AAB SHA-256, review-queue lockout & AppEdit gates
 │   ├── build-play-store-assets.mjs      # Repeatable 24-bit RGB Play Store graphic & screenshot compositor

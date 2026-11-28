@@ -516,14 +516,27 @@ class ServiceLifecyclePolicyTest {
         allGamesFinal = false
       )
     )
-    // All displayed games from previous week are FINAL -> wake immediately even if recently polled
-    assertTrue(
+    // All games FINAL: debounce ultra-rapid (<15s) OS focus churn, wake promptly once >=15s elapsed
+    assertFalse(
+      "Must debounce rapid <15s foreground churn right after all games turn FINAL",
       ServiceLifecyclePolicy.shouldWakeActivePollOnAppForeground(
         settings = activeSettings,
         isBroadcastPaused = false,
         isPollLoopActive = true,
         isRefreshing = false,
         lastUpdatedMillis = 195_000L,
+        nowMillis = 200_000L,
+        allGamesFinal = true
+      )
+    )
+    assertTrue(
+      "All displayed games FINAL and >=15s since last poll -> wake promptly for post-MNF week rollover check",
+      ServiceLifecyclePolicy.shouldWakeActivePollOnAppForeground(
+        settings = activeSettings,
+        isBroadcastPaused = false,
+        isPollLoopActive = true,
+        isRefreshing = false,
+        lastUpdatedMillis = 180_000L,
         nowMillis = 200_000L,
         allGamesFinal = true
       )

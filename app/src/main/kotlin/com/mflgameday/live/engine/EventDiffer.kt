@@ -19,7 +19,9 @@ import kotlin.math.abs
  */
 class EventDiffer(
   private val maxPlayAgeMillis: Long = 480_000L,
-  private val maxReviewUpgradeAgeMillis: Long = 1_200_000L
+  private val maxReviewUpgradeAgeMillis: Long = 1_200_000L,
+  private val redZoneRepeatCooldownMillis: Long = 90_000L,
+  private val fantasyEchoCooldownMillis: Long = 180_000L
 ) {
   private data class PendingTry(
     val gameId: String,
@@ -28,29 +30,42 @@ class EventDiffer(
   )
 
   private val gamesById = LinkedHashMap<String, NflGameState>()
+  private val gamesByMatchupKey = HashMap<String, NflGameState>()
   private val seenPlaysByGame = HashMap<String, MutableSet<String>>()
   private val announcedScoringPlayIds = HashSet<String>()
+  private val announcedPhaseTransitions = HashSet<String>()
+  private val finalizedMatchupKeys = HashSet<String>()
+  private val pendingScoreCorrectionByMatchup = HashMap<String, Pair<Int, Int>>()
+  private val lastRedZoneAlertMillisByTeamKey = HashMap<String, Long>()
+  private val recentFantasyLeadSignatures = HashMap<String, Long>()
   private val pendingTriesByPlayId = LinkedHashMap<String, PendingTry>()
   private val previousMatchupLeaderByKey = HashMap<String, String?>()
 
   fun currentGame(gameId: String): NflGameState? = gamesById[gameId]
 
   fun stabilizedGames(orderedRawGames: List<NflGameState>): List<NflGameState> =
-    orderedRawGames.map { gamesById[it.id] ?: it }
+    orderedRawGames.map { gamesByMatchupKey[canonicalMatchupKey(it)] ?: gamesById[it.id] ?: it }
 
   fun refineGameWithPlays(gameId: String, plays: List<NflPlay>): NflGameState? {
     val cur = gamesById[gameId] ?: return null
     val refined = LiveFieldSituationResolver.refineWithPlayHistory(cur, plays)
     if (refined != cur) {
       gamesById[gameId] = refined
+      gamesByMatchupKey[canonicalMatchupKey(refined)] = refined
     }
     return refined
   }
 
   fun reset() {
     gamesById.clear()
+    gamesByMatchupKey.clear()
     seenPlaysByGame.clear()
     announcedScoringPlayIds.clear()
+    announcedPhaseTransitions.clear()
+    finalizedMatchupKeys.clear()
+    pendingScoreCorrectionByMatchup.clear()
+    lastRedZoneAlertMillisByTeamKey.clear()
+    recentFantasyLeadSignatures.clear()
     pendingTriesByPlayId.clear()
     previousMatchupLeaderByKey.clear()
   }
@@ -58,14 +73,33 @@ class EventDiffer(
   fun clearFantasyMatchupLeaderForLeague(leagueId: String) {
     val prefix = "${leagueId}_"
     previousMatchupLeaderByKey.keys.removeIf { it.startsWith(prefix) }
+    recentFantasyLeadSignatures.keys.removeIf { it.startsWith(prefix) }
   }
 
   /**
-   * Pre-populates seen play IDs from persisted PlayLog history so restarting the app mid-game
-   * never re-announces plays that were already logged earlier in the quarter.
+   * Pre-populates seen play IDs and one-shot game phase transitions (`KICKOFF`, `HALFTIME`, `FINAL`)
+   * from persisted PlayLog history so restarting or updating the app never re-announces completed
+   * phases or plays across CDN flaps and provider failovers.
    */
   fun seedSeenFromLog(entries: Collection<PlayLogEntry>) {
     for (entry in entries) {
+      val mKey = canonicalMatchupKey(entry.event.game)
+      when (entry.event.kind) {
+        GameEventKind.KICKOFF -> {
+          announcedPhaseTransitions.add("${mKey}_KICKOFF")
+        }
+        GameEventKind.HALFTIME -> {
+          announcedPhaseTransitions.add("${mKey}_KICKOFF")
+          announcedPhaseTransitions.add("${mKey}_HALFTIME")
+        }
+        GameEventKind.FINAL -> {
+          announcedPhaseTransitions.add("${mKey}_KICKOFF")
+          announcedPhaseTransitions.add("${mKey}_HALFTIME")
+          announcedPhaseTransitions.add("${mKey}_FINAL")
+          finalizedMatchupKeys.add(mKey)
+        }
+        else -> Unit
+      }
       val play = entry.event.play ?: continue
       val gameId = entry.event.game.id
       seenPlaysByGame.getOrPut(gameId) { HashSet() }.add(play.id)
@@ -87,11 +121,89 @@ class EventDiffer(
   ): List<GameEvent> {
     val emitted = ArrayList<GameEvent>()
 
-    for (incoming in scoreboard) {
-      val prev = gamesById[incoming.id]
+    for (rawIncoming in scoreboard) {
+      val matchupKey = canonicalMatchupKey(rawIncoming)
+      val prev = gamesByMatchupKey[matchupKey] ?: gamesById[rawIncoming.id]
+      if (rawIncoming.phase == GamePhase.FINAL) {
+        finalizedMatchupKeys.add(matchupKey)
+      }
       if (prev == null) {
-        gamesById[incoming.id] = incoming
+        if (rawIncoming.phase != GamePhase.SCHEDULED) {
+          announcedPhaseTransitions.add("${matchupKey}_KICKOFF")
+        }
+        if (
+          rawIncoming.phase == GamePhase.HALFTIME ||
+          rawIncoming.phase == GamePhase.FINAL ||
+          (rawIncoming.phase == GamePhase.LIVE && rawIncoming.period >= 3)
+        ) {
+          announcedPhaseTransitions.add("${matchupKey}_HALFTIME")
+        }
+        if (rawIncoming.phase == GamePhase.FINAL || matchupKey in finalizedMatchupKeys) {
+          announcedPhaseTransitions.add("${matchupKey}_FINAL")
+          finalizedMatchupKeys.add(matchupKey)
+        }
+        val initial = if (matchupKey in finalizedMatchupKeys && rawIncoming.phase != GamePhase.FINAL) {
+          rawIncoming.copy(
+            phase = GamePhase.FINAL,
+            clock = "0:00",
+            inRedZone = false,
+            isLiveDown = false,
+            fieldSituation = LiveFieldSituation.SCRIMMAGE_DRIVE
+          )
+        } else {
+          rawIncoming
+        }
+        if (initial.inRedZone && initial.phase == GamePhase.LIVE) {
+          initial.possessionTeam?.code?.let { teamCode ->
+            lastRedZoneAlertMillisByTeamKey["${matchupKey}_$teamCode"] = nowMillis
+          }
+        }
+        gamesById[initial.id] = initial
+        gamesByMatchupKey[matchupKey] = initial
         continue
+      }
+
+      // Monotonic phase latch: once FINAL (or KICKOFF/HALFTIME started), lagging CDN edges cannot regress backward
+      val effectivePhase = when {
+        matchupKey in finalizedMatchupKeys || prev.phase == GamePhase.FINAL -> GamePhase.FINAL
+        prev.phase != GamePhase.SCHEDULED && rawIncoming.phase == GamePhase.SCHEDULED -> prev.phase
+        prev.phase == GamePhase.LIVE && prev.period >= 3 && rawIncoming.phase == GamePhase.HALFTIME -> GamePhase.LIVE
+        else -> rawIncoming.phase
+      }
+
+      // Require 2 consecutive downward observations before lowering a team's score (suppresses 1-poll stale CDN dips)
+      var confirmedScoreCorrection = false
+      val rawDownward = rawIncoming.away.score < prev.away.score || rawIncoming.home.score < prev.home.score
+      val effectiveAwayScore: Int
+      val effectiveHomeScore: Int
+      if (rawDownward) {
+        val candidate = rawIncoming.away.score to rawIncoming.home.score
+        if (pendingScoreCorrectionByMatchup[matchupKey] == candidate) {
+          pendingScoreCorrectionByMatchup.remove(matchupKey)
+          effectiveAwayScore = rawIncoming.away.score
+          effectiveHomeScore = rawIncoming.home.score
+          confirmedScoreCorrection = true
+        } else {
+          pendingScoreCorrectionByMatchup[matchupKey] = candidate
+          effectiveAwayScore = maxOf(rawIncoming.away.score, prev.away.score)
+          effectiveHomeScore = maxOf(rawIncoming.home.score, prev.home.score)
+        }
+      } else {
+        pendingScoreCorrectionByMatchup.remove(matchupKey)
+        effectiveAwayScore = rawIncoming.away.score
+        effectiveHomeScore = rawIncoming.home.score
+      }
+
+      val incoming = rawIncoming.copy(
+        phase = effectivePhase,
+        away = rawIncoming.away.copy(score = effectiveAwayScore),
+        home = rawIncoming.home.copy(score = effectiveHomeScore),
+        clock = if (effectivePhase == GamePhase.FINAL) "0:00" else rawIncoming.clock
+      )
+      val mappedPrevPossEspnId = when (prev.possessionTeam) {
+        incoming.away.team -> incoming.away.espnId
+        incoming.home.team -> incoming.home.espnId
+        else -> prev.possessionEspnId?.takeIf { incoming.sideByEspnId(it) != null }
       }
 
       // Distinguish genuine mid-drive blinks from post-score PAT & commercial-break Kickoff states
@@ -124,7 +236,7 @@ class EventDiffer(
           val isSafetyKick = maxDelta == 2 && !wasPatPending && !(awayDeltaRaw > 0 && homeDeltaRaw > 0)
           val kickingOrTryEspnId = when {
             // NFL Rule 11-3-2: after ANY try (including a defensive 2-pt conversion return), the TD-scoring team kicks off
-            wasPatPending && prev.possessionEspnId != null -> prev.possessionEspnId
+            wasPatPending && mappedPrevPossEspnId != null -> mappedPrevPossEspnId
             isSafetyKick -> if (scoredAway) incoming.home.espnId else incoming.away.espnId
             else -> if (scoredAway) incoming.away.espnId else incoming.home.espnId
           }
@@ -137,8 +249,8 @@ class EventDiffer(
         prev.fieldSituation == LiveFieldSituation.KICKOFF_PENDING -> {
           val possessionFlippedToReceiver =
             incoming.possessionEspnId != null &&
-              prev.possessionEspnId != null &&
-              incoming.possessionEspnId != prev.possessionEspnId
+              mappedPrevPossEspnId != null &&
+              incoming.possessionEspnId != mappedPrevPossEspnId
           if (kickoffCompletedNow || possessionFlippedToReceiver) {
             // Dynamic Kickoff touchback / return completed before 1st & 10 down marker posted -> exit KICKOFF_PENDING!
             incoming.copy(
@@ -148,20 +260,20 @@ class EventDiffer(
           } else {
             // Once XP/2-Pt/FG resolved, stay in KICKOFF_PENDING across Official Timeouts until kickoff!
             incoming.copy(
-              possessionEspnId = incoming.possessionEspnId ?: prev.possessionEspnId,
+              possessionEspnId = incoming.possessionEspnId ?: mappedPrevPossEspnId,
               inRedZone = false,
               fieldSituation = LiveFieldSituation.KICKOFF_PENDING
             )
           }
         }
         incoming.fieldSituation != LiveFieldSituation.SCRIMMAGE_DRIVE -> incoming.copy(
-          possessionEspnId = incoming.possessionEspnId ?: prev.possessionEspnId,
+          possessionEspnId = incoming.possessionEspnId ?: mappedPrevPossEspnId,
           inRedZone = false
         )
         prev.fieldSituation != LiveFieldSituation.SCRIMMAGE_DRIVE -> {
           // Official Timeout / TV Commercial break after a TD: keep awaiting PAT/Kickoff until next 1st down!
           incoming.copy(
-            possessionEspnId = incoming.possessionEspnId ?: prev.possessionEspnId,
+            possessionEspnId = incoming.possessionEspnId ?: mappedPrevPossEspnId,
             inRedZone = false,
             fieldSituation = prev.fieldSituation
           )
@@ -169,16 +281,21 @@ class EventDiffer(
         incoming.possessionEspnId == null || !incoming.isLiveDown -> {
           // Mid-drive timeout without any score change: preserve offensive possession & red-zone state
           incoming.copy(
-            possessionEspnId = prev.possessionEspnId,
+            possessionEspnId = mappedPrevPossEspnId,
             inRedZone = prev.inRedZone
           )
         }
         else -> incoming
       }
       gamesById[stabilized.id] = stabilized
+      gamesByMatchupKey[matchupKey] = stabilized
 
       fun buildEvent(kind: GameEventKind, team: NflSide? = null): GameEvent = GameEvent(
-        id = "${stabilized.id}_${kind.name}_$nowMillis",
+        id = if (kind == GameEventKind.KICKOFF || kind == GameEventKind.HALFTIME || kind == GameEventKind.FINAL) {
+          "${matchupKey}_${kind.name}"
+        } else {
+          "${matchupKey}_${kind.name}_$nowMillis"
+        },
         kind = kind,
         game = stabilized,
         team = team,
@@ -189,15 +306,25 @@ class EventDiffer(
       )
 
       when {
-        prev.phase == GamePhase.SCHEDULED && stabilized.phase == GamePhase.LIVE ->
+        prev.phase == GamePhase.SCHEDULED &&
+          stabilized.phase == GamePhase.LIVE &&
+          matchupKey !in finalizedMatchupKeys &&
+          announcedPhaseTransitions.add("${matchupKey}_KICKOFF") ->
           emitted.add(buildEvent(GameEventKind.KICKOFF))
-        prev.phase == GamePhase.LIVE && stabilized.phase == GamePhase.HALFTIME ->
+        prev.phase == GamePhase.LIVE &&
+          stabilized.phase == GamePhase.HALFTIME &&
+          matchupKey !in finalizedMatchupKeys &&
+          announcedPhaseTransitions.add("${matchupKey}_HALFTIME") ->
           emitted.add(buildEvent(GameEventKind.HALFTIME))
-        (prev.phase == GamePhase.LIVE || prev.phase == GamePhase.HALFTIME) && stabilized.phase == GamePhase.FINAL ->
+        (prev.phase == GamePhase.LIVE || prev.phase == GamePhase.HALFTIME) &&
+          stabilized.phase == GamePhase.FINAL &&
+          announcedPhaseTransitions.add("${matchupKey}_FINAL") -> {
+          finalizedMatchupKeys.add(matchupKey)
           emitted.add(buildEvent(GameEventKind.FINAL))
+        }
       }
 
-      if (stabilized.away.score < prev.away.score || stabilized.home.score < prev.home.score) {
+      if (confirmedScoreCorrection) {
         emitted.add(buildEvent(GameEventKind.SCORE_CORRECTION))
       } else if (emitFallbackScoreEvents) {
         val awayDelta = stabilized.away.score - prev.away.score
@@ -210,12 +337,20 @@ class EventDiffer(
         }
       }
 
+      if (prev.possessionTeam != null && stabilized.possessionTeam != null && prev.possessionTeam != stabilized.possessionTeam) {
+        lastRedZoneAlertMillisByTeamKey.remove("${matchupKey}_${prev.possessionTeam?.code}")
+      }
       val enteredRedZone = stabilized.inRedZone &&
-        !(prev.inRedZone && prev.possessionEspnId == stabilized.possessionEspnId)
+        !(prev.inRedZone && prev.possessionTeam != null && prev.possessionTeam == stabilized.possessionTeam)
       if (enteredRedZone && stabilized.phase == GamePhase.LIVE) {
         val offenseSide = stabilized.sideByEspnId(stabilized.possessionEspnId)
         if (offenseSide != null) {
-          emitted.add(buildEvent(GameEventKind.RED_ZONE, team = offenseSide))
+          val rzKey = "${matchupKey}_${offenseSide.team.code}"
+          val lastRzAt = lastRedZoneAlertMillisByTeamKey[rzKey]
+          if (lastRzAt == null || (nowMillis - lastRzAt) >= redZoneRepeatCooldownMillis) {
+            lastRedZoneAlertMillisByTeamKey[rzKey] = nowMillis
+            emitted.add(buildEvent(GameEventKind.RED_ZONE, team = offenseSide))
+          }
         }
       }
     }
@@ -340,9 +475,15 @@ class EventDiffer(
       val prevLeaderId = previousMatchupLeaderByKey[key]
       if (currentLeaderId != null && currentLeaderId != prevLeaderId && (m.away.score + m.home.score) > 0.0) {
         previousMatchupLeaderByKey[key] = currentLeaderId
+        val fmt = "%.${precision}f"
+        val sig = "${key}_${currentLeaderId}_${fmt.format(m.away.score)}_${fmt.format(m.home.score)}"
+        val lastSigAt = recentFantasyLeadSignatures[sig]
+        if (lastSigAt != null && (nowMillis - lastSigAt) < fantasyEchoCooldownMillis) {
+          continue
+        }
+        recentFantasyLeadSignatures[sig] = nowMillis
         val leader = if (currentLeaderId == m.away.franchiseId) m.away else m.home
         val trailer = if (currentLeaderId == m.away.franchiseId) m.home else m.away
-        val fmt = "%.${precision}f"
         val leadVerb = if (leader.franchiseId == myFranchiseId) "takes the lead" else "pulls ahead"
         val headline = "Fantasy lead change in $leagueName! ${leader.franchiseName} $leadVerb over ${trailer.franchiseName}, ${fmt.format(leader.score)} to ${fmt.format(trailer.score)}."
         val syntheticSide = NflSide(
@@ -470,6 +611,21 @@ class EventDiffer(
   }
 
   companion object {
+    fun canonicalMatchupKey(game: NflGameState): String {
+      val awayCode = game.away.team.code.trim().uppercase()
+      val homeCode = game.home.team.code.trim().uppercase()
+      return if (
+        awayCode.isNotEmpty() &&
+        homeCode.isNotEmpty() &&
+        awayCode != "NFL" &&
+        homeCode != "NFL"
+      ) {
+        "${awayCode}@${homeCode}"
+      } else {
+        game.id
+      }
+    }
+
     internal fun tryFailedInParenthetical(text: String): Boolean {
       val openIdx = text.lastIndexOf('(')
       if (openIdx == -1) return false

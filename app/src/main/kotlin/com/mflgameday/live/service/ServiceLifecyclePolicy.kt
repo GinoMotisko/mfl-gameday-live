@@ -319,7 +319,8 @@ object ServiceLifecyclePolicy {
     lastUpdatedMillis: Long?,
     nowMillis: Long,
     allGamesFinal: Boolean,
-    staleThresholdMs: Long = 45_000L
+    staleThresholdMs: Long = 45_000L,
+    minFinalWakeIntervalMs: Long = 15_000L
   ): Boolean {
     if (settings.operatingMode != OperatingMode.MFL_AND_NFL_LIVE &&
       settings.operatingMode != OperatingMode.NFL_LIVE_ONLY
@@ -327,9 +328,10 @@ object ServiceLifecyclePolicy {
       return false
     }
     if (isBroadcastPaused || !isPollLoopActive || isRefreshing) return false
-    if (allGamesFinal) return true
     if (lastUpdatedMillis == null) return true
-    return (nowMillis - lastUpdatedMillis) >= staleThresholdMs
+    val elapsed = nowMillis - lastUpdatedMillis
+    if (allGamesFinal) return elapsed >= minFinalWakeIntervalMs
+    return elapsed >= staleThresholdMs
   }
 
   /**

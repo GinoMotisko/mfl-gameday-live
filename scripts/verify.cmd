@@ -6,7 +6,7 @@ if "%JAVA_HOME%"=="" (
   )
 )
 echo [GameDay Live] Running unit tests (direct + playStore), pipeline integration tests, lint checks, Direct APK, and Play Store AAB...
-call "%~dp0..\gradlew.bat" testDirectDebugUnitTest testPlayStoreDebugUnitTest lintDirectDebug lintVitalPlayStoreRelease assembleDirectRelease bundlePlayStoreRelease
+call "%~dp0..\gradlew.bat" testDirectDebugUnitTest testPlayStoreDebugUnitTest compileDirectDebugAndroidTestKotlin lintDirectDebug lintVitalDirectRelease lintVitalPlayStoreRelease assembleDirectRelease bundlePlayStoreRelease
 if errorlevel 1 (
   echo [GameDay Live] VERIFY FAILED
   exit /b 1
@@ -14,6 +14,11 @@ if errorlevel 1 (
 node "%~dp0test-play-publish.mjs"
 if errorlevel 1 (
   echo [GameDay Live] PLAY PUBLISH GATE TESTS FAILED
+  exit /b 1
+)
+node "%~dp0check-release-invariants.mjs"
+if errorlevel 1 (
+  echo [GameDay Live] RELEASE INVARIANT CHECKS FAILED
   exit /b 1
 )
 echo [GameDay Live] VERIFY PASSED

@@ -26,10 +26,12 @@ cmd /c "scripts\verify.cmd"
 ```
 
 This executes:
-1. `testDirectDebugUnitTest` (unit tests + MockWebServer MFL/ESPN pipeline tests + `ServiceLifecyclePolicyTest` + `DiagnosticsAndLogoTest`)
-2. `lintDirectDebug` & `lintVitalPlayStoreRelease`
-3. `assembleDirectRelease` -> `app/build/outputs/apk/direct/release/app-direct-release.apk`
-4. `bundlePlayStoreRelease` -> `app/build/outputs/bundle/playStoreRelease/app-playStore-release.aab` (+ R8 mapping at `app/build/outputs/mapping/playStoreRelease/mapping.txt`)
+1. `testDirectDebugUnitTest` & `testPlayStoreDebugUnitTest` (unit tests, `LiveFeedChaosAndIdempotencyTest`, MockWebServer MFL/ESPN pipeline tests, `ServiceLifecyclePolicyTest`, `DiagnosticsAndLogoTest`)
+2. `compileDirectDebugAndroidTestKotlin` (ensures instrumented Compose UI smoke tests stay compiling)
+3. `lintDirectDebug`, `lintVitalDirectRelease` & `lintVitalPlayStoreRelease`
+4. `assembleDirectRelease` -> `app/build/outputs/apk/direct/release/app-direct-release.apk`
+5. `bundlePlayStoreRelease` -> `app/build/outputs/bundle/playStoreRelease/app-playStore-release.aab` (+ embedded R8 mapping & `app/build/outputs/mapping/playStoreRelease/mapping.txt`)
+6. `node scripts/test-play-publish.mjs` & `node scripts/check-release-invariants.mjs` (enforces version/doc lockstep, Play manifest privacy stripping, keyless SHA-pinned CI, `verify.cmd`/`verify.sh` parity, and AAB integrity)
 
 ---
 
