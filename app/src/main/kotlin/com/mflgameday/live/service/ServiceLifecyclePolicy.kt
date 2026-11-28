@@ -356,7 +356,11 @@ object ServiceLifecyclePolicy {
     }
 
     if (operatingMode == OperatingMode.NFL_LIVE_ONLY) {
-      return (normalizedEspnWeek ?: mflStatus?.effectiveActiveWeek ?: currentUiWeek).coerceIn(1, MflStatusInfo.MAX_MFL_NFL_WEEK)
+      val mflFallback = mflStatus?.effectiveActiveWeek
+      if (normalizedEspnWeek == null && sameSeasonAsUi && mflFallback != null && currentUiWeek > mflFallback) {
+        return currentUiWeek.coerceIn(1, MflStatusInfo.MAX_MFL_NFL_WEEK)
+      }
+      return (normalizedEspnWeek ?: mflFallback ?: currentUiWeek).coerceIn(1, MflStatusInfo.MAX_MFL_NFL_WEEK)
     }
 
     val baseWeek = (mflStatus?.effectiveActiveWeek ?: currentUiWeek).coerceIn(1, MflStatusInfo.MAX_MFL_NFL_WEEK)

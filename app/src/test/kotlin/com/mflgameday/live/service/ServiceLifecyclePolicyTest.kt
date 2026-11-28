@@ -704,6 +704,20 @@ class ServiceLifecyclePolicyTest {
     assertEquals(2 to 12, ServiceLifecyclePolicy.toEspnTargetSeasonTypeAndWeek(12))
     assertEquals(3 to 1, ServiceLifecyclePolicy.toEspnTargetSeasonTypeAndWeek(19))
     assertEquals(3 to 5, ServiceLifecyclePolicy.toEspnTargetSeasonTypeAndWeek(22))
+
+    // NFL_LIVE_ONLY: transient ESPN failure preserves advanced UI week in the same season instead of regressing to lagging MFL week
+    assertEquals(
+      13,
+      ServiceLifecyclePolicy.resolveEffectiveWeek(
+        operatingMode = OperatingMode.NFL_LIVE_ONLY,
+        currentUiWeek = 13,
+        mflStatus = MflStatusInfo(2026, currentWeek = 12, liveScoringWeek = 12, upcomingWeek = 12, lineupWeek = 12, completedWeek = 11),
+        espnSeasonType = null,
+        espnWeekNumber = null,
+        previousGamesAllFinal = false,
+        sameSeasonAsUi = true
+      )
+    )
   }
 
   @Test
