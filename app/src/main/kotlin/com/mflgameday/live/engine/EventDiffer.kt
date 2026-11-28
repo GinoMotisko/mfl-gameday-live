@@ -43,6 +43,8 @@ class EventDiffer(
 
   fun currentGame(gameId: String): NflGameState? = gamesById[gameId]
 
+  fun hasPendingScoreCorrections(): Boolean = pendingScoreCorrectionByMatchup.isNotEmpty()
+
   fun stabilizedGames(orderedRawGames: List<NflGameState>): List<NflGameState> =
     orderedRawGames.map { gamesByMatchupKey[canonicalMatchupKey(it)] ?: gamesById[it.id] ?: it }
 
@@ -578,7 +580,7 @@ class EventDiffer(
       else -> GameEventKind.OTHER_SCORE
     }
     return GameEvent(
-      id = "${game.id}_fallback_${kind.name}_$nowMillis",
+      id = "${canonicalMatchupKey(game)}_${side.team.code}_fallback_${kind.name}_$nowMillis",
       kind = kind,
       game = game,
       team = side,

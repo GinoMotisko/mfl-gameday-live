@@ -1428,7 +1428,7 @@ class GameDayCoordinator(
         val cond = mflClient.fetchMflNflSchedule(
           year = year,
           week = week,
-          etag = if (forceScheduleReload) null else mflScheduleEtag
+          etag = if (forceScheduleReload || differ.hasPendingScoreCorrections()) null else mflScheduleEtag
         )
         GameDayTelemetry.recordMflPoll(success = true, etagNotModified = cond.notModified)
         if (!cond.notModified && cond.games.isNotEmpty() && canEmitForCycle(cycleGen)) {

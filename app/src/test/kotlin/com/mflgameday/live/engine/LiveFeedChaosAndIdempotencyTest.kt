@@ -265,9 +265,20 @@ class LiveFeedChaosAndIdempotencyTest {
 
     // Poll 4 + 5: genuine 2-poll booth review overturns TD to 14-14
     assertTrue(differ.ingestScoreboard(listOf(s14), t0 + 90_000L, emitFallbackScoreEvents = true).isEmpty())
+    assertTrue("Pending score correction must bypass MFL 304 ETag cache on next poll", differ.hasPendingScoreCorrections())
     val confirmedEvents = differ.ingestScoreboard(listOf(s14), t0 + 120_000L, emitFallbackScoreEvents = true)
     assertEquals(listOf(GameEventKind.SCORE_CORRECTION), confirmedEvents.map { it.kind })
     assertEquals(14, differ.stabilizedGames(listOf(s14)).single().away.score)
+    assertFalse(differ.hasPendingScoreCorrections())
+
+    // Simultaneous MFL fallback TD by both teams in the same poll must produce distinct IDs so neither team is dropped
+    val bothScored = s14.copy(
+      away = s14.away.copy(score = 21),
+      home = s14.home.copy(score = 21)
+    )
+    val bothEvents = differ.ingestScoreboard(listOf(bothScored), t0 + 180_000L, emitFallbackScoreEvents = true)
+    assertEquals(2, bothEvents.size)
+    assertEquals(2, bothEvents.map { it.id }.toSet().size)
   }
 
   @Test
