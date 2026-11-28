@@ -747,6 +747,7 @@ async function cmdSetRollout(flags) {
 export function evaluateSmokeGate({
   publicStoreLive,
   prodReleases = [],
+  appDetails = null,
   expectedVersion,
   expectedVersionCode,
   expectedSha256,
@@ -769,6 +770,7 @@ export function evaluateSmokeGate({
   const checks = {
     playPublicHttp200: Boolean(publicStoreLive),
     playProductionTrackActive: expectedVersionCode ? activeCodes.includes(String(expectedVersionCode)) : activeCodes.length > 0,
+    appSupportPhoneOmitted: appDetails ? !String(appDetails.contactPhone || '').trim() : true,
     motiskoReleaseApiVersionMatch: expectedVersion ? releaseApi?.version === expectedVersion : Boolean(releaseApi?.version),
     motiskoReleaseApiSha256Match: hasValidShaFormat && shaMatchesExpected,
     motiskoReleaseApiPlayLive: Boolean(releaseApi?.playStoreLive),
@@ -787,6 +789,7 @@ export function evaluateSmokeGate({
   const hardGatesOk =
     checks.playPublicHttp200 &&
     checks.playProductionTrackActive &&
+    checks.appSupportPhoneOmitted &&
     checks.motiskoReleaseApiVersionMatch &&
     checks.motiskoReleaseApiSha256Match &&
     checks.motiskoReleaseApiPlayLive &&
@@ -807,6 +810,7 @@ export function evaluateSmokeGate({
       userFraction: r.userFraction
     })),
     activeProductionVersionCodes: activeCodes,
+    appDetails,
     expectedSha256: expectedSha256 || null,
     motiskoReleaseApi: releaseApi,
     checks
@@ -857,9 +861,13 @@ async function cmdSmoke(flags) {
       explicitSha ? Promise.resolve(explicitSha) : fetchPublishedGithubReleaseSha256(expectedVersion)
     ]);
 
-  const prodTrack = await withPlayAppEdit(accessToken, { commit: false }, (editId) =>
-    playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/production`)
-  );
+  const { prodTrack, appDetails } = await withPlayAppEdit(accessToken, { commit: false }, async (editId) => {
+    const [trackData, detailsData] = await Promise.all([
+      playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/tracks/production`),
+      playApiFetch(accessToken, `${ANDROID_PUBLISHER_BASE}/edits/${editId}/details`)
+    ]);
+    return { prodTrack: trackData, appDetails: detailsData };
+  });
   const releaseApi = await releaseApiResp.json();
   const showcaseHtml = await showcaseResp.text();
   const storeHtml = await storeHtmlResp.text();
@@ -869,6 +877,7 @@ async function cmdSmoke(flags) {
   const result = evaluateSmokeGate({
     publicStoreLive: publicStore.live,
     prodReleases: prodTrack.releases || [],
+    appDetails,
     expectedVersion,
     expectedVersionCode,
     expectedSha256,

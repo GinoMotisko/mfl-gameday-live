@@ -20,6 +20,7 @@ import {
   verifyPng24BitRgbBuffer,
   withPlayAppEdit
 } from './play-publish.mjs';
+import { assertNoSubmissionPackPhone } from './check-release-invariants.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -243,6 +244,55 @@ async function runTests() {
   });
   assert.equal(staleShowcaseSmoke.verdict, 'FAIL');
   assert.equal(staleShowcaseSmoke.checks.motiskoShowcasePageOk, false);
+
+  const exposedPhoneSmoke = evaluateSmokeGate({
+    publicStoreLive: true,
+    prodReleases: [{ versionCodes: ['7'], status: 'completed' }],
+    appDetails: { contactEmail: 'support.gameday@motisko.com', contactPhone: '+15706844750' },
+    expectedVersion: 'v1.2.3',
+    expectedVersionCode: '7',
+    expectedSha256: validSha,
+    releaseApi: { version: 'v1.2.3', sha256: validSha, playStoreLive: true },
+    showcaseStatus: 200,
+    showcaseHtml: validShowcase,
+    apkRedirectStatus: 307,
+    apkRedirectLocation: 'https://github.com/GinoMotisko/mfl-gameday-live/releases/latest/download/MFL-GameDay-Live.apk',
+    apkTargetHttpOk: true,
+    storeHtml: '1.2.3'
+  });
+  assert.equal(exposedPhoneSmoke.verdict, 'FAIL');
+  assert.equal(exposedPhoneSmoke.checks.appSupportPhoneOmitted, false);
+
+  const omittedPhoneSmoke = evaluateSmokeGate({
+    publicStoreLive: true,
+    prodReleases: [{ versionCodes: ['7'], status: 'completed' }],
+    appDetails: { contactEmail: 'support.gameday@motisko.com' },
+    expectedVersion: 'v1.2.3',
+    expectedVersionCode: '7',
+    expectedSha256: validSha,
+    releaseApi: { version: 'v1.2.3', sha256: validSha, playStoreLive: true },
+    showcaseStatus: 200,
+    showcaseHtml: validShowcase,
+    apkRedirectStatus: 307,
+    apkRedirectLocation: 'https://github.com/GinoMotisko/mfl-gameday-live/releases/latest/download/MFL-GameDay-Live.apk',
+    apkTargetHttpOk: true,
+    storeHtml: '1.2.3'
+  });
+  assert.equal(omittedPhoneSmoke.verdict, 'PASS_ALL_LIVE');
+  assert.equal(omittedPhoneSmoke.checks.appSupportPhoneOmitted, true);
+
+  // Submission pack regression guard must reject both backtick-wrapped and plain phone entries
+  assert.throws(
+    () => assertNoSubmissionPackPhone('- **Contact Details**:\n  - **Phone**: `+1 570-684-4750`'),
+    /must keep app-level Store Listing Contact Phone intentionally blank/
+  );
+  assert.throws(
+    () => assertNoSubmissionPackPhone('- **Contact Details**:\n  - **Phone**: +1 570-684-4750'),
+    /must keep app-level Store Listing Contact Phone intentionally blank/
+  );
+  assertNoSubmissionPackPhone(
+    '- **Contact Details**:\n  - **Phone**: *(Intentionally blank — cleared via `androidpublisher v3` `edits.details`)*'
+  );
 
   // 6. discoverStoreGraphics discovers generated kit subdirectories (phone, 7in, 10in, foldable)
   const tmpKit = fs.mkdtempSync(path.join(os.tmpdir(), 'play-kit-test-'));
