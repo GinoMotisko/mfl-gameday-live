@@ -244,6 +244,42 @@ async function runTests() {
   assert.equal(staleShowcaseSmoke.verdict, 'FAIL');
   assert.equal(staleShowcaseSmoke.checks.motiskoShowcasePageOk, false);
 
+  const exposedPhoneSmoke = evaluateSmokeGate({
+    publicStoreLive: true,
+    prodReleases: [{ versionCodes: ['7'], status: 'completed' }],
+    appDetails: { contactEmail: 'support.gameday@motisko.com', contactPhone: '+15706844750' },
+    expectedVersion: 'v1.2.3',
+    expectedVersionCode: '7',
+    expectedSha256: validSha,
+    releaseApi: { version: 'v1.2.3', sha256: validSha, playStoreLive: true },
+    showcaseStatus: 200,
+    showcaseHtml: validShowcase,
+    apkRedirectStatus: 307,
+    apkRedirectLocation: 'https://github.com/GinoMotisko/mfl-gameday-live/releases/latest/download/MFL-GameDay-Live.apk',
+    apkTargetHttpOk: true,
+    storeHtml: '1.2.3'
+  });
+  assert.equal(exposedPhoneSmoke.verdict, 'FAIL');
+  assert.equal(exposedPhoneSmoke.checks.appSupportPhoneOmitted, false);
+
+  const omittedPhoneSmoke = evaluateSmokeGate({
+    publicStoreLive: true,
+    prodReleases: [{ versionCodes: ['7'], status: 'completed' }],
+    appDetails: { contactEmail: 'support.gameday@motisko.com' },
+    expectedVersion: 'v1.2.3',
+    expectedVersionCode: '7',
+    expectedSha256: validSha,
+    releaseApi: { version: 'v1.2.3', sha256: validSha, playStoreLive: true },
+    showcaseStatus: 200,
+    showcaseHtml: validShowcase,
+    apkRedirectStatus: 307,
+    apkRedirectLocation: 'https://github.com/GinoMotisko/mfl-gameday-live/releases/latest/download/MFL-GameDay-Live.apk',
+    apkTargetHttpOk: true,
+    storeHtml: '1.2.3'
+  });
+  assert.equal(omittedPhoneSmoke.verdict, 'PASS_ALL_LIVE');
+  assert.equal(omittedPhoneSmoke.checks.appSupportPhoneOmitted, true);
+
   // 6. discoverStoreGraphics discovers generated kit subdirectories (phone, 7in, 10in, foldable)
   const tmpKit = fs.mkdtempSync(path.join(os.tmpdir(), 'play-kit-test-'));
   try {

@@ -63,7 +63,7 @@ All uploadable artifacts are staged in both `dist/play-store-kit/` and `OneDrive
 - **Tags**: `Sports`, `Fantasy sports`, `Audio`
 - **Contact Details**:
   - **Email**: `support.gameday@motisko.com`
-  - **Phone**: `+1 570-684-4750`
+  - **Phone**: *(Intentionally blank — cleared via `androidpublisher v3` `edits.details` so app support nudges users to email/web while only the mandatory Organization/DSA compliance block shows the LLC VoIP line)*
   - **Website**: `https://www.motisko.com/gameday`
 - **Privacy Policy URL**: `https://www.motisko.com/gameday/privacy`
 

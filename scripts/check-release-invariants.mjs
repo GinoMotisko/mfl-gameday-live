@@ -34,6 +34,10 @@ for (const expectedToken of [
     `docs/PLAY_STORE_SUBMISSION_PACK.md out of sync with build.gradle.kts — missing "${expectedToken}"`
   );
 }
+assert(
+  !/^\s*-\s*\*\*Phone\*\*:\s*\+?\d/m.test(pack),
+  'docs/PLAY_STORE_SUBMISSION_PACK.md must keep app-level Store Listing Contact Phone intentionally blank (no phone number)'
+);
 
 // 2. Privacy, Foreground Service & Google Play Manifest Invariants
 const mainManifest = read('app/src/main/AndroidManifest.xml');
