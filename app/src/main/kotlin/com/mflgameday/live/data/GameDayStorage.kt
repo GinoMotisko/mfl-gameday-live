@@ -33,6 +33,23 @@ class GameDayStorage(context: Context) {
     private const val KEY_LEAGUES_JSON = "leagues_v1"
     private const val KEY_MFL_COOKIE_ENC = "mfl_cookie_enc"
     private const val KEY_API_KEY_PREFIX = "league_apikey_enc_"
+    private const val KEY_PLAY_LOG_YEAR = "play_log_season_year"
+    private const val KEY_PLAY_LOG_WEEK = "play_log_week"
+  }
+
+  fun loadPlayLogSeasonAndWeek(): Pair<Int, Int>? {
+    val y = prefs.getInt(KEY_PLAY_LOG_YEAR, -1)
+    val w = prefs.getInt(KEY_PLAY_LOG_WEEK, -1)
+    return if (y > 0 && w > 0) y to w else null
+  }
+
+  fun savePlayLogSeasonAndWeek(year: Int, week: Int) {
+    if (year > 0 && week > 0) {
+      prefs.edit()
+        .putInt(KEY_PLAY_LOG_YEAR, year)
+        .putInt(KEY_PLAY_LOG_WEEK, week)
+        .apply()
+    }
   }
 
   fun loadSettings(): GameDaySettings {

@@ -516,14 +516,27 @@ class ServiceLifecyclePolicyTest {
         allGamesFinal = false
       )
     )
-    // All displayed games from previous week are FINAL -> wake immediately even if recently polled
-    assertTrue(
+    // All games FINAL: debounce ultra-rapid (<15s) OS focus churn, wake promptly once >=15s elapsed
+    assertFalse(
+      "Must debounce rapid <15s foreground churn right after all games turn FINAL",
       ServiceLifecyclePolicy.shouldWakeActivePollOnAppForeground(
         settings = activeSettings,
         isBroadcastPaused = false,
         isPollLoopActive = true,
         isRefreshing = false,
         lastUpdatedMillis = 195_000L,
+        nowMillis = 200_000L,
+        allGamesFinal = true
+      )
+    )
+    assertTrue(
+      "All displayed games FINAL and >=15s since last poll -> wake promptly for post-MNF week rollover check",
+      ServiceLifecyclePolicy.shouldWakeActivePollOnAppForeground(
+        settings = activeSettings,
+        isBroadcastPaused = false,
+        isPollLoopActive = true,
+        isRefreshing = false,
+        lastUpdatedMillis = 180_000L,
         nowMillis = 200_000L,
         allGamesFinal = true
       )
@@ -691,6 +704,20 @@ class ServiceLifecyclePolicyTest {
     assertEquals(2 to 12, ServiceLifecyclePolicy.toEspnTargetSeasonTypeAndWeek(12))
     assertEquals(3 to 1, ServiceLifecyclePolicy.toEspnTargetSeasonTypeAndWeek(19))
     assertEquals(3 to 5, ServiceLifecyclePolicy.toEspnTargetSeasonTypeAndWeek(22))
+
+    // NFL_LIVE_ONLY: transient ESPN failure preserves advanced UI week in the same season instead of regressing to lagging MFL week
+    assertEquals(
+      13,
+      ServiceLifecyclePolicy.resolveEffectiveWeek(
+        operatingMode = OperatingMode.NFL_LIVE_ONLY,
+        currentUiWeek = 13,
+        mflStatus = MflStatusInfo(2026, currentWeek = 12, liveScoringWeek = 12, upcomingWeek = 12, lineupWeek = 12, completedWeek = 11),
+        espnSeasonType = null,
+        espnWeekNumber = null,
+        previousGamesAllFinal = false,
+        sameSeasonAsUi = true
+      )
+    )
   }
 
   @Test

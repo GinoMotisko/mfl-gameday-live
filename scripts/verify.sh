@@ -48,12 +48,15 @@ echo "[GameDay Live] Running unit tests (direct + playStore), pipeline integrati
 bash ./gradlew \
   testDirectDebugUnitTest \
   testPlayStoreDebugUnitTest \
+  compileDirectDebugAndroidTestKotlin \
   lintDirectDebug \
+  lintVitalDirectRelease \
   lintVitalPlayStoreRelease \
   assembleDirectRelease \
   bundlePlayStoreRelease \
   "${EXTRA_GRADLE_ARGS[@]}"
 
 node "${SCRIPT_DIR}/test-play-publish.mjs"
+node "${SCRIPT_DIR}/check-release-invariants.mjs"
 
 echo "[GameDay Live] VERIFY PASSED"

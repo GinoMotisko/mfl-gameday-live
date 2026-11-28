@@ -146,6 +146,8 @@ class GameDayCoordinator(
   private var isAppInForeground: Boolean = false
   @Volatile
   private var pausedExplicitlyByUser: Boolean = false
+  @Volatile
+  private var persistedPlayLogPeriod: Pair<Int, Int>? = null
 
   private val _uiState = MutableStateFlow(
     GameDayUiState(
@@ -169,13 +171,24 @@ class GameDayCoordinator(
     }
     scope.launch {
       val rawSavedLog = storage.loadPlayLog()
-      val savedLog = rawSavedLog.filterNot { ServiceLifecyclePolicy.isSimulatedPlayId(it.event.id) }
+      val nonSimLog = rawSavedLog.filterNot { ServiceLifecyclePolicy.isSimulatedPlayId(it.event.id) }
+      val savedPeriod = storage.loadPlayLogSeasonAndWeek()
+      val maxAgeMs = nonSimLog.maxOfOrNull { System.currentTimeMillis() - it.timestampMillis }
+      val isLegacyMultiDayStale = savedPeriod == null && maxAgeMs != null && maxAgeMs > 4L * 24L * 3600_000L
+      val savedLog = if (isLegacyMultiDayStale) emptyList() else nonSimLog
       if (savedLog.size != rawSavedLog.size) {
         storage.savePlayLog(savedLog)
       }
       if (savedLog.isNotEmpty()) {
         differ.seedSeenFromLog(savedLog)
-        _uiState.update { it.copy(playLog = savedLog) }
+        persistedPlayLogPeriod = savedPeriod
+        _uiState.update { state ->
+          state.copy(
+            playLog = savedLog,
+            currentSeasonYear = savedPeriod?.first ?: state.currentSeasonYear,
+            currentWeek = savedPeriod?.second ?: state.currentWeek
+          )
+        }
       }
       val currentMode = _uiState.value.settings.operatingMode
       if (currentMode != OperatingMode.UNCONFIGURED) {
@@ -1249,15 +1262,24 @@ class GameDayCoordinator(
       lastStatusSyncMillis = System.currentTimeMillis()
     }
     val year = status?.year ?: _uiState.value.currentSeasonYear
+    val preservePeriodUntilEspn = _uiState.value.settings.operatingMode == OperatingMode.NFL_LIVE_ONLY &&
+      persistedPlayLogPeriod != null
+    val initYear = if (preservePeriodUntilEspn) _uiState.value.currentSeasonYear else year
     val rawWeek = status?.effectiveActiveWeek ?: _uiState.value.currentWeek
-    // Never regress an already-advanced week within the same season while upcoming scheduled games are loaded
+    // Never regress an already-advanced week or wipe persisted playLog on MFL status alone before ESPN/first-poll resolves
     val hasUpcomingGames = _uiState.value.nflGames.any { it.phase == GamePhase.SCHEDULED || it.phase == GamePhase.LIVE || it.phase == GamePhase.HALFTIME }
-    val week = if (year == _uiState.value.currentSeasonYear && hasUpcomingGames && _uiState.value.currentWeek > rawWeek) {
+    val week = if (preservePeriodUntilEspn) {
+      _uiState.value.currentWeek
+    } else if (
+      initYear == _uiState.value.currentSeasonYear &&
+      (hasUpcomingGames || _uiState.value.playLog.isNotEmpty()) &&
+      _uiState.value.currentWeek > rawWeek
+    ) {
       _uiState.value.currentWeek
     } else {
       rawWeek
     }
-    applySeasonAndWeek(year = year, week = week)
+    applySeasonAndWeek(year = initYear, week = week, allowReset = false)
 
     val cachedJson = if (forcePlayerRefresh) null else storage.loadCachedPlayersJson(year)
     val playersMap: Map<String, FantasyPlayer> = if (cachedJson != null) {
@@ -1339,8 +1361,13 @@ class GameDayCoordinator(
         previousGamesAllFinal = previousGamesAllFinal,
         sameSeasonAsUi = resolvedYear == previousSeasonYear
       )
-      if (resolvedWeek != week || resolvedYear != year) {
-        applySeasonAndWeek(year = resolvedYear, week = resolvedWeek)
+      val targetPeriod = resolvedYear to resolvedWeek
+      if (
+        resolvedWeek != week ||
+        resolvedYear != year ||
+        (persistedPlayLogPeriod != null && persistedPlayLogPeriod != targetPeriod)
+      ) {
+        applySeasonAndWeek(year = resolvedYear, week = resolvedWeek, allowReset = true)
         year = resolvedYear
         week = resolvedWeek
       }
@@ -1406,8 +1433,13 @@ class GameDayCoordinator(
         previousGamesAllFinal = previousGamesAllFinal,
         sameSeasonAsUi = year == previousSeasonYear
       )
-      if (fallbackWeek != week || year != _uiState.value.currentSeasonYear) {
-        applySeasonAndWeek(year = year, week = fallbackWeek)
+      val fallbackPeriod = year to fallbackWeek
+      if (
+        fallbackWeek != week ||
+        year != _uiState.value.currentSeasonYear ||
+        (persistedPlayLogPeriod != null && persistedPlayLogPeriod != fallbackPeriod)
+      ) {
+        applySeasonAndWeek(year = year, week = fallbackWeek, allowReset = true)
         week = fallbackWeek
       }
     }
@@ -1418,7 +1450,7 @@ class GameDayCoordinator(
         val cond = mflClient.fetchMflNflSchedule(
           year = year,
           week = week,
-          etag = if (forceScheduleReload) null else mflScheduleEtag
+          etag = if (forceScheduleReload || differ.hasPendingScoreCorrections()) null else mflScheduleEtag
         )
         GameDayTelemetry.recordMflPoll(success = true, etagNotModified = cond.notModified)
         if (!cond.notModified && cond.games.isNotEmpty() && canEmitForCycle(cycleGen)) {
@@ -1663,9 +1695,31 @@ class GameDayCoordinator(
     if (!forceSpeak && state.isBroadcastPaused) return
     val settings = state.settings
     val exposures = state.crossLeagueExposures
+    val seenEventIds = state.playLog.mapTo(HashSet()) { it.event.id }
+    val seenOneShotPhaseKeys = state.playLog
+      .asSequence()
+      .filter {
+        !ServiceLifecyclePolicy.isSimulatedPlayId(it.event.id) && (
+          it.event.kind == GameEventKind.KICKOFF ||
+            it.event.kind == GameEventKind.HALFTIME ||
+            it.event.kind == GameEventKind.FINAL
+          )
+      }
+      .mapTo(HashSet()) { "${EventDiffer.canonicalMatchupKey(it.event.game)}_${it.event.kind.name}" }
     val newEntries = ArrayList<PlayLogEntry>(events.size)
 
     for (event in events) {
+      if (!forceSpeak) {
+        if (!seenEventIds.add(event.id)) continue
+        if (
+          event.kind == GameEventKind.KICKOFF ||
+          event.kind == GameEventKind.HALFTIME ||
+          event.kind == GameEventKind.FINAL
+        ) {
+          val phaseKey = "${EventDiffer.canonicalMatchupKey(event.game)}_${event.kind.name}"
+          if (!seenOneShotPhaseKeys.add(phaseKey)) continue
+        }
+      }
       val involved = BestBallAndPaceCalculator.findInvolvedExposures(event, exposures, state.playersDb)
       val category = SpokenCategory.forEvent(event.kind)
       val relevant = BestBallAndPaceCalculator.isEventRelevantForScope(
@@ -1749,8 +1803,12 @@ class GameDayCoordinator(
 
     if (settings.operatingMode != OperatingMode.DEMO_SIMULATOR) {
       val realEntriesOnly = combinedLog.filterNot { ServiceLifecyclePolicy.isSimulatedPlayId(it.event.id) }
+      val logYear = state.currentSeasonYear
+      val logWeek = state.currentWeek
+      persistedPlayLogPeriod = logYear to logWeek
       scope.launch {
         storage.savePlayLog(realEntriesOnly)
+        storage.savePlayLogSeasonAndWeek(logYear, logWeek)
       }
     }
   }
@@ -1795,17 +1853,21 @@ class GameDayCoordinator(
     )
   }
 
-  private fun applySeasonAndWeek(year: Int, week: Int) {
+  private fun applySeasonAndWeek(year: Int, week: Int, allowReset: Boolean = true) {
     val prevYear = _uiState.value.currentSeasonYear
     val prevWeek = _uiState.value.currentWeek
+    val effectivePrevYear = persistedPlayLogPeriod?.first ?: prevYear
+    val effectivePrevWeek = persistedPlayLogPeriod?.second ?: prevWeek
     val hadLoadedData = _uiState.value.lastUpdatedMillis != null ||
       _uiState.value.leagueSnapshots.isNotEmpty() ||
-      _uiState.value.nflGames.isNotEmpty()
-    if (hadLoadedData && (year != prevYear || week != prevWeek)) {
-      DiagnosticsLogger.info(LogSubsystem.APP, "Season/Week rolled over ($prevYear W$prevWeek -> $year W$week) — resetting weekly play ticker")
+      _uiState.value.nflGames.isNotEmpty() ||
+      _uiState.value.playLog.isNotEmpty()
+    if (allowReset && hadLoadedData && (year != effectivePrevYear || week != effectivePrevWeek)) {
+      DiagnosticsLogger.info(LogSubsystem.APP, "Season/Week rolled over ($effectivePrevYear W$effectivePrevWeek -> $year W$week) — resetting weekly play ticker")
       differ.reset()
       mflScheduleEtag = null
       pendingBreakdownRetryByLeague.clear()
+      persistedPlayLogPeriod = year to week
       _uiState.update {
         it.copy(
           currentSeasonYear = year,
@@ -1819,6 +1881,7 @@ class GameDayCoordinator(
       }
       scope.launch {
         storage.savePlayLog(emptyList())
+        storage.savePlayLogSeasonAndWeek(year, week)
         // Also refresh the MFL player database in background on week rollover if cache is stale (>24h)
         if (storage.loadCachedPlayersJson(year) == null) {
           nonCancellingCatching {
@@ -1833,6 +1896,10 @@ class GameDayCoordinator(
         }
       }
     } else {
+      if (allowReset) {
+        persistedPlayLogPeriod = year to week
+        storage.savePlayLogSeasonAndWeek(year, week)
+      }
       _uiState.update { it.copy(currentSeasonYear = year, currentWeek = week) }
     }
   }
